@@ -71,6 +71,13 @@ func main() {
 	opt := optimizer.NewOptimizer()
 	optimizedStatements := opt.OptimizeStatements(statements)
 
+	optimizedAnalyzer := semantic.NewSemanticAnalyzerWithOptions(mode)
+	optimizedAnalyzer.Analyze(optimizedStatements)
+	printDiagnostics(os.Stderr, optimizedAnalyzer.Diagnostics())
+	if optimizedAnalyzer.HasErrors() {
+		os.Exit(1)
+	}
+
 	if cliOptions.printASTBeforeAfter {
 		fmt.Fprintln(os.Stdout, "=== AST before optimization ===")
 		printAST(os.Stdout, statements)
