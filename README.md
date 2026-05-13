@@ -7,6 +7,7 @@ Small educational compiler front-end in Go. It includes:
 - a text AST printer;
 - a Mermaid AST generator;
 - a semantic analyzer with scope, initialization, and type checks;
+- an AST optimizer with constant folding;
 - an AST-based interpreter/executor.
 
 ## Project Layout
@@ -21,8 +22,17 @@ Small educational compiler front-end in Go. It includes:
 - `internal/parser` - syntax analysis
 - `internal/ast` - AST nodes and AST renderers
 - `internal/semantic` - semantic analysis
+- `internal/optimizer` - AST optimization and verification
 - `internal/executor` - AST execution/runtime
 - `examples` - sample input programs
+
+## Pipeline
+
+The default execution pipeline is:
+
+```txt
+Lexer -> Parser -> Semantic Analyzer -> Optimizer -> Interpreter
+```
 
 ## Language Features
 
@@ -99,11 +109,24 @@ CLI modes:
 ```bash
 go run ./cmd/comp --tokens examples/program.txt
 go run ./cmd/comp --ast examples/program.txt
+go run ./cmd/comp --optimized-ast examples/program.txt
+go run ./cmd/comp --ast-before-after examples/program.txt
 go run ./cmd/comp --mermaid examples/program.txt
 go run ./cmd/comp --semantic examples/program.txt
+go run ./cmd/comp --verify-optimization examples/program.txt
 go run ./cmd/comp --run examples/program.txt
 go run ./cmd/comp --compat-loginov examples/loginov_style/functions.txt
 ```
+
+`--run` executes the optimized AST.
+
+`--ast` prints the parsed AST before optimization.
+
+`--optimized-ast` prints the AST after optimization.
+
+`--ast-before-after` prints both versions.
+
+`--verify-optimization` executes both ASTs in isolation and checks that output and runtime behavior match.
 
 ## Lab-Style Demos
 

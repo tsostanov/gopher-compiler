@@ -5,6 +5,7 @@ import (
 	"comp/internal/driver"
 	"comp/internal/executor"
 	"comp/internal/lexer"
+	"comp/internal/optimizer"
 	"comp/internal/options"
 	"comp/internal/parser"
 	"comp/internal/semantic"
@@ -38,7 +39,7 @@ func main() {
 		}
 	}
 
-	needParsed := cliOptions.printAST || cliOptions.printMermaid || cliOptions.printSemantic || cliOptions.runProgram
+	needParsed := cliOptions.printAST || cliOptions.printMermaid || cliOptions.printSemantic || cliOptions.runProgram || cliOptions.printOptimizedAST || cliOptions.printASTBeforeAfter || cliOptions.verifyOptimization
 	if !needParsed {
 		return
 	}
@@ -52,8 +53,7 @@ func main() {
 	}
 
 	if cliOptions.printAST {
-		printer := ast.NewAstPrinter()
-		fmt.Print(printer.Print(statements))
+		printAST(os.Stdout, statements)
 	}
 
 	if cliOptions.printMermaid {
@@ -63,11 +63,43 @@ func main() {
 
 	analyzer := semantic.NewSemanticAnalyzerWithOptions(mode)
 	analyzer.Analyze(statements)
-	for _, diagnostic := range analyzer.Diagnostics() {
-		fmt.Fprintln(os.Stderr, diagnostic)
-	}
+	printDiagnostics(os.Stderr, analyzer.Diagnostics())
 	if analyzer.HasErrors() {
 		os.Exit(1)
+	}
+
+	opt := optimizer.NewOptimizer()
+	optimizedStatements := opt.OptimizeStatements(statements)
+
+	if cliOptions.printASTBeforeAfter {
+		fmt.Fprintln(os.Stdout, "=== AST before optimization ===")
+		printAST(os.Stdout, statements)
+		fmt.Fprintln(os.Stdout)
+		fmt.Fprintln(os.Stdout, "=== AST after optimization ===")
+		printAST(os.Stdout, optimizedStatements)
+	}
+
+	if cliOptions.printOptimizedAST {
+		printAST(os.Stdout, optimizedStatements)
+	}
+
+	if cliOptions.verifyOptimization {
+		verifier := optimizer.NewOptimizationVerifierWithOptions(mode)
+		result := verifier.Verify(statements, optimizedStatements)
+		fmt.Fprintln(os.Stdout, result.Message)
+		if !result.Ok {
+			if result.OriginalOutput != "" || result.OptimizedOutput != "" {
+				fmt.Fprintln(os.Stdout, "Original output:")
+				fmt.Fprint(os.Stdout, result.OriginalOutput)
+				fmt.Fprintln(os.Stdout, "Optimized output:")
+				fmt.Fprint(os.Stdout, result.OptimizedOutput)
+			}
+			if result.OriginalError != nil || result.OptimizedError != nil {
+				fmt.Fprintf(os.Stdout, "Original error: %v\n", result.OriginalError)
+				fmt.Fprintf(os.Stdout, "Optimized error: %v\n", result.OptimizedError)
+			}
+			os.Exit(1)
+		}
 	}
 
 	if !cliOptions.runProgram {
@@ -75,21 +107,24 @@ func main() {
 	}
 
 	run := executor.NewExecutorWithOptions(os.Stdout, mode)
-	if err := run.Execute(statements); err != nil {
+	if err := run.Execute(optimizedStatements); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
 type cliOptions struct {
-	filePath       string
-	printTokens    bool
-	printAST       bool
-	printMermaid   bool
-	printSemantic  bool
-	runProgram     bool
-	compatLoginov  bool
-	explicitAction bool
+	filePath            string
+	printTokens         bool
+	printAST            bool
+	printMermaid        bool
+	printSemantic       bool
+	printOptimizedAST   bool
+	printASTBeforeAfter bool
+	verifyOptimization  bool
+	runProgram          bool
+	compatLoginov       bool
+	explicitAction      bool
 }
 
 func parseOptions(args []string) (cliOptions, error) {
@@ -107,6 +142,15 @@ func parseOptions(args []string) (cliOptions, error) {
 			opts.explicitAction = true
 		case "--semantic":
 			opts.printSemantic = true
+			opts.explicitAction = true
+		case "--optimized-ast":
+			opts.printOptimizedAST = true
+			opts.explicitAction = true
+		case "--ast-before-after":
+			opts.printASTBeforeAfter = true
+			opts.explicitAction = true
+		case "--verify-optimization":
+			opts.verifyOptimization = true
 			opts.explicitAction = true
 		case "--run":
 			opts.runProgram = true
@@ -129,4 +173,15 @@ func parseOptions(args []string) (cliOptions, error) {
 	}
 
 	return opts, nil
+}
+
+func printAST(output *os.File, statements []ast.Stmt) {
+	printer := ast.NewAstPrinter()
+	fmt.Fprint(output, printer.Print(statements))
+}
+
+func printDiagnostics(output *os.File, diagnostics []semantic.SemanticDiagnostic) {
+	for _, diagnostic := range diagnostics {
+		fmt.Fprintln(output, diagnostic)
+	}
 }
