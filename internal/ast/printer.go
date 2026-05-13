@@ -6,8 +6,7 @@ import (
 	"strings"
 )
 
-type AstPrinter struct {
-}
+type AstPrinter struct{}
 
 func NewAstPrinter() *AstPrinter {
 	return &AstPrinter{}
@@ -27,14 +26,14 @@ func (p *AstPrinter) printNode(b *strings.Builder, node any, indent string, isLa
 		return
 	}
 
-	marker := "├── "
+	marker := "|-- "
 	if isLast {
-		marker = "└── "
+		marker = "`-- "
 	}
 	b.WriteString(indent)
 	b.WriteString(marker)
 
-	childIndent := indent + "│   "
+	childIndent := indent + "|   "
 	if isLast {
 		childIndent = indent + "    "
 	}
@@ -73,7 +72,11 @@ func (p *AstPrinter) printNode(b *strings.Builder, node any, indent string, isLa
 		p.printNode(b, n.Condition, childIndent, false)
 		p.printNode(b, n.Body, childIndent, true)
 	case FuncStmt:
-		fmt.Fprintf(b, "FunctionStatement: %s -> %s\n", n.Name.Value, n.ReturnType.Kind.String())
+		if n.ReturnType.Kind == TypeUnknown {
+			fmt.Fprintf(b, "FunctionStatement: %s\n", n.Name.Value)
+		} else {
+			fmt.Fprintf(b, "FunctionStatement: %s -> %s\n", n.Name.Value, n.ReturnType.Kind.String())
+		}
 		for i, param := range n.Parameters {
 			isLastParam := len(n.Body.Statements) == 0 && i == len(n.Parameters)-1
 			p.printNode(b, param, childIndent, isLastParam)
@@ -112,7 +115,11 @@ func (p *AstPrinter) printNode(b *strings.Builder, node any, indent string, isLa
 		b.WriteString("Grouping\n")
 		p.printNode(b, n.Expression, childIndent, true)
 	case Parameter:
-		fmt.Fprintf(b, "Parameter: %s : %s\n", n.Name.Value, n.Type.Kind.String())
+		if n.Type.Kind == TypeUnknown {
+			fmt.Fprintf(b, "Parameter: %s\n", n.Name.Value)
+		} else {
+			fmt.Fprintf(b, "Parameter: %s : %s\n", n.Name.Value, n.Type.Kind.String())
+		}
 	default:
 		fmt.Fprintf(b, "Unknown Node: %T\n", node)
 	}

@@ -2,6 +2,7 @@ package executor
 
 import (
 	"comp/internal/ast"
+	"comp/internal/options"
 	tok "comp/internal/token"
 	"fmt"
 	"io"
@@ -118,12 +119,18 @@ type statementResult struct {
 type Executor struct {
 	environment *Environment
 	output      io.Writer
+	options     options.Mode
 }
 
 func NewExecutor(output io.Writer) *Executor {
+	return NewExecutorWithOptions(output, options.Mode{})
+}
+
+func NewExecutorWithOptions(output io.Writer, mode options.Mode) *Executor {
 	return &Executor{
 		environment: NewEnvironment(nil),
 		output:      output,
+		options:     mode,
 	}
 }
 
@@ -180,6 +187,9 @@ func (e *Executor) executeStatement(statement ast.Stmt) (Value, bool, error) {
 	case ast.FuncStmt:
 		return Value{}, false, nil
 	case ast.ReturnStmt:
+		if s.Value == nil {
+			return Value{Type: ast.TypeUnknown, Data: nil}, true, nil
+		}
 		value, err := e.evaluateExpression(s.Value)
 		if err != nil {
 			return Value{}, false, err
@@ -255,7 +265,7 @@ func (e *Executor) executeVarStatement(statement ast.VarStmt) error {
 		variableType = statement.DeclaredType.Kind
 	}
 
-	var value Value
+	value := Value{Type: ast.TypeUnknown, Data: nil}
 	initialized := false
 	if statement.Initializer != nil {
 		initializerValue, err := e.evaluateExpression(statement.Initializer)
@@ -265,16 +275,18 @@ func (e *Executor) executeVarStatement(statement ast.VarStmt) error {
 		if variableType == ast.TypeUnknown {
 			variableType = initializerValue.Type
 		}
-		if variableType != initializerValue.Type {
+		if variableType != ast.TypeUnknown && variableType != initializerValue.Type {
 			return runtimeError(statement.Name, "cannot initialize variable "+statement.Name.Value+" of type "+variableType.String()+" with value of type "+initializerValue.Type.String())
 		}
 		value = initializerValue
 		initialized = true
 	} else {
-		if variableType == ast.TypeUnknown {
+		if variableType == ast.TypeUnknown && !e.options.CompatLoginov {
 			return runtimeError(statement.Name, "variable "+statement.Name.Value+" requires an explicit type or initializer")
 		}
-		value = zeroValue(variableType)
+		if variableType != ast.TypeUnknown {
+			value = zeroValue(variableType)
+		}
 	}
 
 	if !e.environment.DefineVariable(statement.Name.Value, variableType, value, initialized) {
@@ -308,6 +320,9 @@ func (e *Executor) evaluateExpression(expression ast.Expr) (Value, error) {
 		}
 		if variable.Type != ast.TypeUnknown && variable.Type != value.Type {
 			return Value{}, runtimeError(expr.Name, "cannot assign value of type "+value.Type.String()+" to variable "+expr.Name.Value+" of type "+variable.Type.String())
+		}
+		if variable.Type == ast.TypeUnknown {
+			variable.Type = value.Type
 		}
 
 		variable.Value = value
@@ -367,10 +382,14 @@ func (e *Executor) callFunction(function *FunctionValue, arguments []Value) (Val
 
 	for index, parameter := range function.Declaration.Parameters {
 		argument := arguments[index]
-		if parameter.Type.Kind != argument.Type {
-			return Value{}, runtimeError(parameter.Name, "cannot assign value of type "+argument.Type.String()+" to parameter "+parameter.Name.Value+" of type "+parameter.Type.Kind.String())
+		parameterType := parameter.Type.Kind
+		if parameterType != ast.TypeUnknown && parameterType != argument.Type {
+			return Value{}, runtimeError(parameter.Name, "cannot assign value of type "+argument.Type.String()+" to parameter "+parameter.Name.Value+" of type "+parameterType.String())
 		}
-		if !e.environment.DefineVariable(parameter.Name.Value, parameter.Type.Kind, argument, true) {
+		if parameterType == ast.TypeUnknown {
+			parameterType = argument.Type
+		}
+		if !e.environment.DefineVariable(parameter.Name.Value, parameterType, argument, true) {
 			return Value{}, runtimeError(parameter.Name, "name "+parameter.Name.Value+" is already declared in this scope")
 		}
 	}
@@ -380,6 +399,9 @@ func (e *Executor) callFunction(function *FunctionValue, arguments []Value) (Val
 		return Value{}, err
 	}
 	if !returned {
+		if function.Declaration.ReturnType.Kind == ast.TypeUnknown {
+			return Value{Type: ast.TypeUnknown, Data: nil}, nil
+		}
 		return Value{}, runtimeError(function.Declaration.Name, "function "+function.Declaration.Name.Value+" did not return a value")
 	}
 	return value, nil

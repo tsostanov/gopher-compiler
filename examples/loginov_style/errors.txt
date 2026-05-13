@@ -1,0 +1,8 @@
+var x;
+print x;
+
+y = 10;
+
+if (1 == 2) {
+	print "never";
+}

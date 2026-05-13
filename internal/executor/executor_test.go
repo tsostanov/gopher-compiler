@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"comp/internal/options"
 	"strings"
 	"testing"
 )
@@ -146,5 +147,56 @@ print fact(5);
 
 	if output != "120\n" {
 		t.Fatalf("expected output %q, got %q", "120\n", output)
+	}
+}
+
+func TestExecutorSupportsUntypedFunSyntax(t *testing.T) {
+	output, err := executeSource(t, `
+fun add(a, b) {
+	return a + b;
+}
+
+var result = add(5, 10);
+print result;
+`)
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+
+	if output != "15\n" {
+		t.Fatalf("expected output %q, got %q", "15\n", output)
+	}
+}
+
+func TestExecutorSupportsCompatVarWithoutInitializer(t *testing.T) {
+	output, err := executeSourceWithOptions(t, `
+var x;
+x = 10;
+print x;
+`, options.Mode{CompatLoginov: true})
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+
+	if output != "10\n" {
+		t.Fatalf("expected output %q, got %q", "10\n", output)
+	}
+}
+
+func TestExecutorAllowsReturnWithoutValue(t *testing.T) {
+	output, err := executeSource(t, `
+fun noop() {
+	return;
+}
+
+noop();
+print "ok";
+`)
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+
+	if output != "ok\n" {
+		t.Fatalf("expected output %q, got %q", "ok\n", output)
 	}
 }

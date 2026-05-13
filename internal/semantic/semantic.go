@@ -2,6 +2,7 @@ package semantic
 
 import (
 	"comp/internal/ast"
+	"comp/internal/options"
 	tok "comp/internal/token"
 	"fmt"
 )
@@ -134,20 +135,35 @@ type variableState struct {
 	used        bool
 }
 
+type constantValue struct {
+	valueType ast.ValueType
+	data      any
+}
+
 type SemanticAnalyzer struct {
 	environment     *SemanticEnvironment
 	variables       []*VariableInfo
 	diagnostics     []SemanticDiagnostic
 	currentFunction *FunctionInfo
+	options         options.Mode
 }
 
 func NewSemanticAnalyzer() *SemanticAnalyzer {
+	return NewSemanticAnalyzerWithOptions(options.Mode{})
+}
+
+func NewSemanticAnalyzerWithOptions(mode options.Mode) *SemanticAnalyzer {
 	return &SemanticAnalyzer{
 		environment: NewSemanticEnvironment(nil),
+		options:     mode,
 	}
 }
 
 func (a *SemanticAnalyzer) Analyze(statements []ast.Stmt) []SemanticDiagnostic {
+	a.environment = NewSemanticEnvironment(nil)
+	a.variables = nil
+	a.diagnostics = nil
+	a.currentFunction = nil
 	a.analyzeStatements(statements)
 	a.reportUnusedVariables()
 	return a.diagnostics
@@ -202,14 +218,7 @@ func (a *SemanticAnalyzer) VisitStatement(statement ast.Stmt) {
 		}
 		a.visitFunctionBody(s, function)
 	case ast.ReturnStmt:
-		if a.currentFunction == nil {
-			a.errorAt(s.Keyword, "return statement is only allowed inside functions")
-			return
-		}
-		valueType := a.VisitExpression(s.Value)
-		if !a.isAssignable(a.currentFunction.ReturnType, valueType) {
-			a.errorAt(s.Keyword, "cannot return value of type "+valueType.String()+" from function "+a.currentFunction.Name+" with return type "+a.currentFunction.ReturnType.String())
-		}
+		a.visitReturnStatement(s)
 	case ast.PrintStmt:
 		a.VisitExpression(s.Expression)
 	case ast.ExprStmt:
@@ -222,8 +231,11 @@ func (a *SemanticAnalyzer) VisitStatement(statement ast.Stmt) {
 	case ast.IfStmt:
 		conditionType := a.VisitExpression(s.Condition)
 		a.requireType(conditionType, ast.TypeBool, s.Condition, "if condition must have type bool")
-		before := a.snapshotVariableStates()
+		if always, value := a.constantBoolValue(s.Condition); always && !value {
+			a.warningAt(s.Keyword, "unreachable code: then branch never executes")
+		}
 
+		before := a.snapshotVariableStates()
 		a.VisitStatement(s.ThenBranch)
 		thenState := a.snapshotVariableStates()
 
@@ -241,13 +253,15 @@ func (a *SemanticAnalyzer) VisitStatement(statement ast.Stmt) {
 	case ast.WhileStmt:
 		conditionType := a.VisitExpression(s.Condition)
 		a.requireType(conditionType, ast.TypeBool, s.Condition, "while condition must have type bool")
-		before := a.snapshotVariableStates()
+		if always, value := a.constantBoolValue(s.Condition); always && !value {
+			a.warningAt(s.Keyword, "unreachable code: while body never executes")
+		}
 
+		before := a.snapshotVariableStates()
 		a.VisitStatement(s.Body)
 		bodyState := a.snapshotVariableStates()
 		a.restoreVariableStates(before)
 
-		// Loop body may never execute, so initialization is not guaranteed afterwards.
 		for variable, state := range before {
 			body := bodyState[variable]
 			variable.Flags.Defined = state.defined
@@ -280,7 +294,7 @@ func (a *SemanticAnalyzer) visitVarStatement(statement ast.VarStmt) {
 	}
 	a.variables = append(a.variables, variable)
 
-	if statement.DeclaredType == nil && statement.Initializer == nil {
+	if statement.DeclaredType == nil && statement.Initializer == nil && !a.options.CompatLoginov {
 		a.errorAt(statement.Name, "variable "+statement.Name.Value+" requires an explicit type or initializer")
 	}
 	if declaredType != ast.TypeUnknown && initializerType != ast.TypeUnknown && !a.isAssignable(declaredType, initializerType) {
@@ -314,8 +328,27 @@ func (a *SemanticAnalyzer) visitFunctionBody(statement ast.FuncStmt, function *F
 
 	a.analyzeStatements(statement.Body.Statements)
 
-	if !guaranteesReturnBlock(statement.Body) {
+	if statement.ReturnType.Kind != ast.TypeUnknown && !guaranteesReturnBlock(statement.Body) {
 		a.errorAt(statement.Name, "function "+statement.Name.Value+" may not return a value on all paths")
+	}
+}
+
+func (a *SemanticAnalyzer) visitReturnStatement(statement ast.ReturnStmt) {
+	if a.currentFunction == nil {
+		a.errorAt(statement.Keyword, "return statement is only allowed inside functions")
+		return
+	}
+
+	if statement.Value == nil {
+		if a.currentFunction.ReturnType != ast.TypeUnknown {
+			a.errorAt(statement.Keyword, "cannot return without value from function "+a.currentFunction.Name+" with return type "+a.currentFunction.ReturnType.String())
+		}
+		return
+	}
+
+	valueType := a.VisitExpression(statement.Value)
+	if !a.isAssignable(a.currentFunction.ReturnType, valueType) {
+		a.errorAt(statement.Keyword, "cannot return value of type "+valueType.String()+" from function "+a.currentFunction.Name+" with return type "+a.currentFunction.ReturnType.String())
 	}
 }
 
@@ -345,6 +378,9 @@ func (a *SemanticAnalyzer) VisitExpression(expression ast.Expr) ast.ValueType {
 		}
 		if variable.Type != ast.TypeUnknown && valueType != ast.TypeUnknown && !a.isAssignable(variable.Type, valueType) {
 			a.errorAt(e.Name, "cannot assign value of type "+valueType.String()+" to variable "+e.Name.Value+" of type "+variable.Type.String())
+		}
+		if variable.Type == ast.TypeUnknown && valueType != ast.TypeUnknown {
+			variable.Type = valueType
 		}
 
 		variable.Flags.Initialized = true
@@ -475,6 +511,15 @@ func (a *SemanticAnalyzer) errorAt(token tok.Token, message string) {
 	})
 }
 
+func (a *SemanticAnalyzer) warningAt(token tok.Token, message string) {
+	a.diagnostics = append(a.diagnostics, SemanticDiagnostic{
+		Severity: SeverityWarning,
+		Message:  message,
+		Line:     token.Line,
+		Column:   token.Column,
+	})
+}
+
 func (a *SemanticAnalyzer) requireType(actual, expected ast.ValueType, expression ast.Expr, message string) {
 	if actual == ast.TypeUnknown || actual == expected {
 		return
@@ -554,6 +599,93 @@ func (a *SemanticAnalyzer) checkBinaryExpression(expression ast.BinaryExpr, left
 	}
 }
 
+func (a *SemanticAnalyzer) constantBoolValue(expression ast.Expr) (bool, bool) {
+	value, ok := a.constantValue(expression)
+	if !ok || value.valueType != ast.TypeBool {
+		return false, false
+	}
+	return true, value.data.(bool)
+}
+
+func (a *SemanticAnalyzer) constantValue(expression ast.Expr) (constantValue, bool) {
+	switch e := expression.(type) {
+	case ast.LiteralExpr:
+		switch e.Token.Type {
+		case tok.TokenNumber:
+			return constantValue{valueType: ast.TypeInt, data: mustAtoi(e.Token.Value)}, true
+		case tok.TokenString:
+			return constantValue{valueType: ast.TypeString, data: e.Token.Value}, true
+		case tok.TokenTrue:
+			return constantValue{valueType: ast.TypeBool, data: true}, true
+		case tok.TokenFalse:
+			return constantValue{valueType: ast.TypeBool, data: false}, true
+		}
+	case ast.GroupingExpr:
+		return a.constantValue(e.Expression)
+	case ast.UnaryExpr:
+		right, ok := a.constantValue(e.Right)
+		if !ok {
+			return constantValue{}, false
+		}
+		switch e.Operator.Type {
+		case tok.TokenExcl:
+			if right.valueType != ast.TypeBool {
+				return constantValue{}, false
+			}
+			return constantValue{valueType: ast.TypeBool, data: !right.data.(bool)}, true
+		case tok.TokenMinus:
+			if right.valueType != ast.TypeInt {
+				return constantValue{}, false
+			}
+			return constantValue{valueType: ast.TypeInt, data: -right.data.(int)}, true
+		}
+	case ast.BinaryExpr:
+		left, ok := a.constantValue(e.Left)
+		if !ok {
+			return constantValue{}, false
+		}
+		right, ok := a.constantValue(e.Right)
+		if !ok {
+			return constantValue{}, false
+		}
+
+		switch e.Operator.Type {
+		case tok.TokenEqEq:
+			if left.valueType != right.valueType {
+				return constantValue{}, false
+			}
+			return constantValue{valueType: ast.TypeBool, data: left.data == right.data}, true
+		case tok.TokenNeq:
+			if left.valueType != right.valueType {
+				return constantValue{}, false
+			}
+			return constantValue{valueType: ast.TypeBool, data: left.data != right.data}, true
+		case tok.TokenLt:
+			if left.valueType != ast.TypeInt || right.valueType != ast.TypeInt {
+				return constantValue{}, false
+			}
+			return constantValue{valueType: ast.TypeBool, data: left.data.(int) < right.data.(int)}, true
+		case tok.TokenLtEq:
+			if left.valueType != ast.TypeInt || right.valueType != ast.TypeInt {
+				return constantValue{}, false
+			}
+			return constantValue{valueType: ast.TypeBool, data: left.data.(int) <= right.data.(int)}, true
+		case tok.TokenGt:
+			if left.valueType != ast.TypeInt || right.valueType != ast.TypeInt {
+				return constantValue{}, false
+			}
+			return constantValue{valueType: ast.TypeBool, data: left.data.(int) > right.data.(int)}, true
+		case tok.TokenGtEq:
+			if left.valueType != ast.TypeInt || right.valueType != ast.TypeInt {
+				return constantValue{}, false
+			}
+			return constantValue{valueType: ast.TypeBool, data: left.data.(int) >= right.data.(int)}, true
+		}
+	}
+
+	return constantValue{}, false
+}
+
 func guaranteesReturnBlock(block ast.BlockStmt) bool {
 	for _, statement := range block.Statements {
 		if guaranteesReturnStatement(statement) {
@@ -608,4 +740,12 @@ func expressionToken(expression ast.Expr) tok.Token {
 	default:
 		return tok.Token{}
 	}
+}
+
+func mustAtoi(value string) int {
+	var result int
+	for i := 0; i < len(value); i++ {
+		result = result*10 + int(value[i]-'0')
+	}
+	return result
 }

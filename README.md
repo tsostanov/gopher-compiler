@@ -5,16 +5,21 @@ Small educational compiler front-end in Go. It includes:
 - a lexer;
 - a parser that builds an AST;
 - a text AST printer;
+- a Mermaid AST generator;
 - a semantic analyzer with scope, initialization, and type checks;
 - an AST-based interpreter/executor.
 
 ## Project Layout
 
-- `cmd/comp` - CLI entry point
+- `cmd/comp` - main CLI entry point
+- `cmd/lexer-demo` - lab-style lexer demo
+- `cmd/parser-demo` - lab-style parser demo with recovery
+- `cmd/semantic-demo` - lab-style semantic diagnostics demo
+- `cmd/interpreter-demo` - lab-style interpreter demo
 - `internal/token` - token types and token metadata
 - `internal/lexer` - lexical analysis
 - `internal/parser` - syntax analysis
-- `internal/ast` - AST nodes and AST printer
+- `internal/ast` - AST nodes and AST renderers
 - `internal/semantic` - semantic analysis
 - `internal/executor` - AST execution/runtime
 - `examples` - sample input programs
@@ -27,7 +32,7 @@ The language supports:
 - function declarations: `func add(a: int, b: int): int { return a + b; }`
 - function calls: `add(1, 2)`
 - assignment: `x = 20;`
-- return statements: `return x;`
+- return statements: `return x;`, `return;`
 - output: `print x;`
 - blocks: `{ ... }`
 - conditions: `if (...) ... else ...`
@@ -38,7 +43,7 @@ The language supports:
 
 ## Type System
 
-The language is statically and strictly typed.
+The default mode is statically and strictly typed.
 
 Available types:
 
@@ -46,7 +51,7 @@ Available types:
 - `bool`
 - `string`
 
-Rules:
+Strict-mode rules:
 
 - a variable must have an explicit type annotation or an initializer
 - if the type is omitted, it is inferred from the initializer
@@ -71,6 +76,7 @@ The analyzer reports:
 - type mismatches in declarations and assignments
 - invalid function calls and return types
 - invalid operand types in expressions
+- dead-code warnings for obviously false `if` and `while` conditions
 
 ## Run
 
@@ -88,11 +94,56 @@ If no file path is provided, the built-in sample is used:
 var x: int = 123; print x + 5;
 ```
 
-Print the AST instead of executing:
+CLI modes:
 
 ```bash
+go run ./cmd/comp --tokens examples/program.txt
 go run ./cmd/comp --ast examples/program.txt
+go run ./cmd/comp --mermaid examples/program.txt
+go run ./cmd/comp --semantic examples/program.txt
+go run ./cmd/comp --run examples/program.txt
+go run ./cmd/comp --compat-loginov examples/loginov_style/functions.txt
 ```
+
+## Lab-Style Demos
+
+Lexer demo:
+
+```bash
+go run ./cmd/lexer-demo examples/program.txt
+```
+
+Parser demo:
+
+```bash
+go run ./cmd/parser-demo examples/program.txt
+```
+
+Semantic demo:
+
+```bash
+go run ./cmd/semantic-demo examples/program.txt
+```
+
+Interpreter demo:
+
+```bash
+go run ./cmd/interpreter-demo examples/program.txt
+```
+
+## Compatibility Mode
+
+The compiler supports both `func` and `fun`.
+`fun` is provided for compatibility with CompilerLabs-style examples.
+
+With `--compat-loginov`, the compiler also accepts:
+
+- untyped parameters: `fun add(a, b) { ... }`
+- optional function return type
+- `var x;`
+- `return;`
+
+Examples for this mode live in `examples/loginov_style`.
 
 ## Example Program
 
@@ -100,10 +151,10 @@ go run ./cmd/comp --ast examples/program.txt
 
 ```txt
 func classify(total: int): string {
-    if (total >= 20) {
-        return "large";
-    }
-    return "small";
+	if (total >= 20) {
+		return "large";
+	}
+	return "small";
 }
 
 var total: int = 57;

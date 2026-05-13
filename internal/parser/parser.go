@@ -2,6 +2,7 @@ package parser
 
 import (
 	"comp/internal/ast"
+	"comp/internal/options"
 	tok "comp/internal/token"
 	"fmt"
 )
@@ -19,11 +20,18 @@ func (e ParseError) Error() string {
 type Parser struct {
 	tokens   []tok.Token
 	position int
+	options  options.Mode
+	errors   []ParseError
 }
 
 func NewParser(tokens []tok.Token) *Parser {
+	return NewParserWithOptions(tokens, options.Mode{})
+}
+
+func NewParserWithOptions(tokens []tok.Token, mode options.Mode) *Parser {
 	return &Parser{
-		tokens: tokens,
+		tokens:  tokens,
+		options: mode,
 	}
 }
 
@@ -39,12 +47,31 @@ func (p *Parser) Parse() ([]ast.Stmt, error) {
 	return statements, nil
 }
 
+func (p *Parser) ParseWithRecovery() ([]ast.Stmt, []ParseError) {
+	p.errors = nil
+
+	var statements []ast.Stmt
+	for !p.isAtEnd() {
+		stmt, err := p.parseStatement()
+		if err != nil {
+			p.errors = append(p.errors, asParseError(err))
+			p.synchronize()
+			continue
+		}
+		statements = append(statements, stmt)
+	}
+
+	errors := make([]ParseError, len(p.errors))
+	copy(errors, p.errors)
+	return statements, errors
+}
+
 func (p *Parser) parseStatement() (ast.Stmt, error) {
 	if p.match(tok.TokenVar) {
 		return p.parseVarDeclaration()
 	}
 	if p.match(tok.TokenFunc) {
-		return p.parseFunctionDeclaration()
+		return p.parseFunctionDeclaration(p.previous())
 	}
 	if p.match(tok.TokenReturn) {
 		return p.parseReturnStatement()
@@ -93,7 +120,7 @@ func (p *Parser) parseVarDeclaration() (ast.Stmt, error) {
 	return ast.VarStmt{Name: name, DeclaredType: declaredType, Initializer: initializer}, nil
 }
 
-func (p *Parser) parseFunctionDeclaration() (ast.Stmt, error) {
+func (p *Parser) parseFunctionDeclaration(keyword tok.Token) (ast.Stmt, error) {
 	name, err := p.consume(tok.TokenID, "expected function name")
 	if err != nil {
 		return nil, err
@@ -102,6 +129,8 @@ func (p *Parser) parseFunctionDeclaration() (ast.Stmt, error) {
 		return nil, err
 	}
 
+	compatFunctionSyntax := keyword.Value == "fun" || p.options.CompatLoginov
+
 	var parameters []ast.Parameter
 	if !p.check(tok.TokenRParen) {
 		for {
@@ -109,15 +138,23 @@ func (p *Parser) parseFunctionDeclaration() (ast.Stmt, error) {
 			if err != nil {
 				return nil, err
 			}
-			if _, err := p.consume(tok.TokenColon, "expected ':' after parameter name"); err != nil {
-				return nil, err
-			}
-			paramType, err := p.parseTypeAnnotation()
-			if err != nil {
-				return nil, err
-			}
-			parameters = append(parameters, ast.Parameter{Name: paramName, Type: *paramType})
 
+			paramType := ast.TypeAnnotation{Kind: ast.TypeUnknown}
+			if p.match(tok.TokenColon) {
+				parsedType, err := p.parseTypeAnnotation()
+				if err != nil {
+					return nil, err
+				}
+				paramType = *parsedType
+			} else if !compatFunctionSyntax {
+				return nil, ParseError{
+					Message: "expected ':' after parameter name",
+					Line:    p.peek().Line,
+					Column:  p.peek().Column,
+				}
+			}
+
+			parameters = append(parameters, ast.Parameter{Name: paramName, Type: paramType})
 			if !p.match(tok.TokenComma) {
 				break
 			}
@@ -127,13 +164,22 @@ func (p *Parser) parseFunctionDeclaration() (ast.Stmt, error) {
 	if _, err := p.consume(tok.TokenRParen, "expected ')' after parameter list"); err != nil {
 		return nil, err
 	}
-	if _, err := p.consume(tok.TokenColon, "expected ':' before function return type"); err != nil {
-		return nil, err
+
+	returnType := ast.TypeAnnotation{Kind: ast.TypeUnknown}
+	if p.match(tok.TokenColon) {
+		parsedType, err := p.parseTypeAnnotation()
+		if err != nil {
+			return nil, err
+		}
+		returnType = *parsedType
+	} else if !compatFunctionSyntax {
+		return nil, ParseError{
+			Message: "expected ':' before function return type",
+			Line:    p.peek().Line,
+			Column:  p.peek().Column,
+		}
 	}
-	returnType, err := p.parseTypeAnnotation()
-	if err != nil {
-		return nil, err
-	}
+
 	if _, err := p.consume(tok.TokenLBrace, "expected '{' before function body"); err != nil {
 		return nil, err
 	}
@@ -153,7 +199,7 @@ func (p *Parser) parseFunctionDeclaration() (ast.Stmt, error) {
 	return ast.FuncStmt{
 		Name:       name,
 		Parameters: parameters,
-		ReturnType: *returnType,
+		ReturnType: returnType,
 		Body:       block,
 	}, nil
 }
@@ -170,6 +216,7 @@ func (p *Parser) parsePrintStatement() (ast.Stmt, error) {
 }
 
 func (p *Parser) parseIfStatement() (ast.Stmt, error) {
+	keyword := p.previous()
 	if _, err := p.consume(tok.TokenLParen, "expected '(' after 'if'"); err != nil {
 		return nil, err
 	}
@@ -194,10 +241,11 @@ func (p *Parser) parseIfStatement() (ast.Stmt, error) {
 		}
 	}
 
-	return ast.IfStmt{Condition: condition, ThenBranch: thenBranch, ElseBranch: elseBranch}, nil
+	return ast.IfStmt{Keyword: keyword, Condition: condition, ThenBranch: thenBranch, ElseBranch: elseBranch}, nil
 }
 
 func (p *Parser) parseWhileStatement() (ast.Stmt, error) {
+	keyword := p.previous()
 	if _, err := p.consume(tok.TokenLParen, "expected '(' after 'while'"); err != nil {
 		return nil, err
 	}
@@ -214,16 +262,22 @@ func (p *Parser) parseWhileStatement() (ast.Stmt, error) {
 		return nil, err
 	}
 
-	return ast.WhileStmt{Condition: condition, Body: body}, nil
+	return ast.WhileStmt{Keyword: keyword, Condition: condition, Body: body}, nil
 }
 
 func (p *Parser) parseReturnStatement() (ast.Stmt, error) {
 	keyword := p.previous()
-	value, err := p.parseExpression()
-	if err != nil {
-		return nil, err
+
+	var value ast.Expr
+	var err error
+	if !p.check(tok.TokenSemicolon) {
+		value, err = p.parseExpression()
+		if err != nil {
+			return nil, err
+		}
 	}
-	if _, err := p.consume(tok.TokenSemicolon, "expected ';' after return value"); err != nil {
+
+	if _, err := p.consume(tok.TokenSemicolon, "expected ';' after return statement"); err != nil {
 		return nil, err
 	}
 	return ast.ReturnStmt{Keyword: keyword, Value: value}, nil
@@ -482,6 +536,33 @@ func (p *Parser) parseTypeAnnotation() (*ast.TypeAnnotation, error) {
 	}
 }
 
+func (p *Parser) synchronize() {
+	if p.isAtEnd() {
+		return
+	}
+
+	p.advance()
+	for !p.isAtEnd() {
+		if p.previous().Type == tok.TokenSemicolon {
+			return
+		}
+
+		switch p.peek().Type {
+		case tok.TokenVar, tok.TokenFunc, tok.TokenPrint, tok.TokenIf, tok.TokenWhile, tok.TokenReturn, tok.TokenRBrace:
+			return
+		}
+
+		p.advance()
+	}
+}
+
+func asParseError(err error) ParseError {
+	if parseErr, ok := err.(ParseError); ok {
+		return parseErr
+	}
+	return ParseError{Message: err.Error()}
+}
+
 func (p *Parser) match(types ...tok.TokenType) bool {
 	for _, t := range types {
 		if p.check(t) {
@@ -509,13 +590,6 @@ func (p *Parser) check(t tok.TokenType) bool {
 		return false
 	}
 	return p.peek().Type == t
-}
-
-func (p *Parser) checkNext(t tok.TokenType) bool {
-	if p.position+1 >= len(p.tokens) {
-		return false
-	}
-	return p.tokens[p.position+1].Type == t
 }
 
 func (p *Parser) advance() tok.Token {

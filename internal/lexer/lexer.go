@@ -113,6 +113,7 @@ func (l *Lexer) TokenizeEach(yield func(tok.Token) bool) error {
 
 var keywords = map[string]tok.TokenType{
 	"var":    tok.TokenVar,
+	"fun":    tok.TokenFunc,
 	"func":   tok.TokenFunc,
 	"return": tok.TokenReturn,
 	"print":  tok.TokenPrint,

@@ -3,6 +3,7 @@ package semantic
 import (
 	"comp/internal/ast"
 	"comp/internal/lexer"
+	"comp/internal/options"
 	"comp/internal/parser"
 	tok "comp/internal/token"
 	"strings"
@@ -149,6 +150,17 @@ func TestSemanticAnalyzerRejectsDeclarationWithoutTypeOrInitializer(t *testing.T
 	assertHasDiagnostic(t, diagnostics, SeverityError, "requires an explicit type or initializer")
 }
 
+func TestSemanticAnalyzerAllowsCompatDeclarationWithoutInitializer(t *testing.T) {
+	diagnostics := analyzeSourceWithOptions(t, `
+var x;
+x = 1;
+print x;
+`, options.Mode{CompatLoginov: true})
+
+	assertNoDiagnostic(t, diagnostics, SeverityError, "requires an explicit type or initializer")
+	assertNoDiagnostic(t, diagnostics, SeverityError, "used before initialization")
+}
+
 func TestSemanticAnalyzerRejectsMismatchedInitializerType(t *testing.T) {
 	diagnostics := analyzeSource(t, `var x: int = "hello";`)
 
@@ -255,6 +267,26 @@ func TestSemanticAnalyzerRejectsReturnOutsideFunction(t *testing.T) {
 	assertHasDiagnostic(t, diagnostics, SeverityError, "return statement is only allowed inside functions")
 }
 
+func TestSemanticAnalyzerAllowsReturnWithoutValueInUntypedFunction(t *testing.T) {
+	diagnostics := analyzeSource(t, `
+fun noop() {
+	return;
+}
+`)
+
+	assertNoDiagnostic(t, diagnostics, SeverityError, "cannot return")
+}
+
+func TestSemanticAnalyzerRejectsReturnWithoutValueInTypedFunction(t *testing.T) {
+	diagnostics := analyzeSource(t, `
+func bad(): int {
+	return;
+}
+`)
+
+	assertHasDiagnostic(t, diagnostics, SeverityError, "cannot return without value")
+}
+
 func TestSemanticAnalyzerRejectsFunctionWithoutGuaranteedReturn(t *testing.T) {
 	diagnostics := analyzeSource(t, `
 func maybe(value: int): int {
@@ -267,7 +299,33 @@ func maybe(value: int): int {
 	assertHasDiagnostic(t, diagnostics, SeverityError, "may not return a value on all paths")
 }
 
+func TestSemanticAnalyzerWarnsAboutDeadIfBranch(t *testing.T) {
+	diagnostics := analyzeSource(t, `
+if (1 == 2) {
+	print "never";
+}
+`)
+
+	assertHasDiagnostic(t, diagnostics, SeverityWarning, "then branch never executes")
+}
+
+func TestSemanticAnalyzerWarnsAboutDeadWhileBody(t *testing.T) {
+	diagnostics := analyzeSource(t, `
+while (false) {
+	print "never";
+}
+`)
+
+	assertHasDiagnostic(t, diagnostics, SeverityWarning, "while body never executes")
+}
+
 func analyzeSource(t *testing.T, source string) []SemanticDiagnostic {
+	t.Helper()
+
+	return analyzeSourceWithOptions(t, source, options.Mode{})
+}
+
+func analyzeSourceWithOptions(t *testing.T, source string, mode options.Mode) []SemanticDiagnostic {
 	t.Helper()
 
 	lexer := lexer.NewLexer(source)
@@ -276,13 +334,13 @@ func analyzeSource(t *testing.T, source string) []SemanticDiagnostic {
 		t.Fatalf("tokenize failed: %v", err)
 	}
 
-	parser := parser.NewParser(tokens)
+	parser := parser.NewParserWithOptions(tokens, mode)
 	statements, err := parser.Parse()
 	if err != nil {
 		t.Fatalf("parse failed: %v", err)
 	}
 
-	analyzer := NewSemanticAnalyzer()
+	analyzer := NewSemanticAnalyzerWithOptions(mode)
 	return analyzer.Analyze(statements)
 }
 

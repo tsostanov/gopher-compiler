@@ -90,6 +90,7 @@ type BlockStmt struct {
 func (BlockStmt) stmtNode() {}
 
 type IfStmt struct {
+	Keyword    tok.Token
 	Condition  Expr
 	ThenBranch Stmt
 	ElseBranch Stmt
@@ -98,6 +99,7 @@ type IfStmt struct {
 func (IfStmt) stmtNode() {}
 
 type WhileStmt struct {
+	Keyword   tok.Token
 	Condition Expr
 	Body      Stmt
 }

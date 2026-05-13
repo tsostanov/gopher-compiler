@@ -2,6 +2,7 @@ package semantic
 
 import (
 	"comp/internal/lexer"
+	"comp/internal/options"
 	"comp/internal/parser"
 	"os"
 	"path/filepath"
@@ -18,6 +19,29 @@ func TestExamplesProgramIsSemanticallyValid(t *testing.T) {
 	}
 	if hasErrorDiagnostics(diagnostics) {
 		t.Fatalf("expected no semantic errors, got %#v", diagnostics)
+	}
+}
+
+func TestLoginovStyleExamplesBehaveInCompatibilityMode(t *testing.T) {
+	testCases := []string{
+		"loginov_style/basic.txt",
+		"loginov_style/functions.txt",
+		"loginov_style/if_while.txt",
+		"loginov_style/mermaid.txt",
+	}
+
+	for _, name := range testCases {
+		t.Run(name, func(t *testing.T) {
+			source := readExampleFile(t, name)
+
+			diagnostics, err := analyzeExampleSourceWithOptions(source, options.Mode{CompatLoginov: true})
+			if err != nil {
+				t.Fatalf("expected example %s to parse, got %v", name, err)
+			}
+			if hasErrorDiagnostics(diagnostics) {
+				t.Fatalf("expected no semantic errors for %s, got %#v", name, diagnostics)
+			}
+		})
 	}
 }
 
@@ -60,19 +84,23 @@ func TestExampleErrorProgramsFailAsExpected(t *testing.T) {
 }
 
 func analyzeExampleSource(source string) ([]SemanticDiagnostic, error) {
+	return analyzeExampleSourceWithOptions(source, options.Mode{})
+}
+
+func analyzeExampleSourceWithOptions(source string, mode options.Mode) ([]SemanticDiagnostic, error) {
 	lex := lexer.NewLexer(source)
 	tokens, err := lex.Tokenize()
 	if err != nil {
 		return nil, err
 	}
 
-	parse := parser.NewParser(tokens)
+	parse := parser.NewParserWithOptions(tokens, mode)
 	statements, err := parse.Parse()
 	if err != nil {
 		return nil, err
 	}
 
-	analyzer := NewSemanticAnalyzer()
+	analyzer := NewSemanticAnalyzerWithOptions(mode)
 	return analyzer.Analyze(statements), nil
 }
 
