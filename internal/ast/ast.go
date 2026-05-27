@@ -52,6 +52,30 @@ type AssignExpr struct {
 
 func (AssignExpr) exprNode() {}
 
+type ArrayExpr struct {
+	Bracket  tok.Token
+	Elements []Expr
+}
+
+func (ArrayExpr) exprNode() {}
+
+type IndexExpr struct {
+	Target  Expr
+	Bracket tok.Token
+	Index   Expr
+}
+
+func (IndexExpr) exprNode() {}
+
+type IndexAssignExpr struct {
+	Target  Expr
+	Bracket tok.Token
+	Index   Expr
+	Value   Expr
+}
+
+func (IndexAssignExpr) exprNode() {}
+
 type GroupingExpr struct {
 	Expression Expr
 }

@@ -104,6 +104,20 @@ func (p *AstPrinter) printNode(b *strings.Builder, node any, indent string, isLa
 	case AssignExpr:
 		fmt.Fprintf(b, "AssignExpression: %s =\n", n.Name.Value)
 		p.printNode(b, n.Value, childIndent, true)
+	case ArrayExpr:
+		b.WriteString("ArrayExpression\n")
+		for i, element := range n.Elements {
+			p.printNode(b, element, childIndent, i == len(n.Elements)-1)
+		}
+	case IndexExpr:
+		b.WriteString("IndexExpression\n")
+		p.printNode(b, n.Target, childIndent, false)
+		p.printNode(b, n.Index, childIndent, true)
+	case IndexAssignExpr:
+		b.WriteString("IndexAssignExpression\n")
+		p.printNode(b, n.Target, childIndent, false)
+		p.printNode(b, n.Index, childIndent, false)
+		p.printNode(b, n.Value, childIndent, true)
 	case UnaryExpr:
 		fmt.Fprintf(b, "UnaryExpression: %s\n", n.Operator.Value)
 		p.printNode(b, n.Right, childIndent, true)

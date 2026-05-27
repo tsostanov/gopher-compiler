@@ -64,6 +64,45 @@ func TestParserRecoveryKeepsFollowingStatements(t *testing.T) {
 	}
 }
 
+func TestParserBuildsArrayExpressions(t *testing.T) {
+	statements, err := parseSource(t, `
+var xs: int[] = [1, 2, 3];
+xs[1] = xs[0];
+`)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	varStmt, ok := statements[0].(ast.VarStmt)
+	if !ok {
+		t.Fatalf("expected var statement, got %T", statements[0])
+	}
+	if varStmt.DeclaredType == nil || !varStmt.DeclaredType.Kind.Equals(ast.ArrayOf(ast.TypeInt)) {
+		t.Fatalf("expected int[] declared type, got %#v", varStmt.DeclaredType)
+	}
+	if _, ok := varStmt.Initializer.(ast.ArrayExpr); !ok {
+		t.Fatalf("expected array initializer, got %T", varStmt.Initializer)
+	}
+
+	exprStmt, ok := statements[1].(ast.ExprStmt)
+	if !ok {
+		t.Fatalf("expected expression statement, got %T", statements[1])
+	}
+	assign, ok := exprStmt.Expression.(ast.IndexAssignExpr)
+	if !ok {
+		t.Fatalf("expected index assignment, got %T", exprStmt.Expression)
+	}
+	if _, ok := assign.Target.(ast.VariableExpr); !ok {
+		t.Fatalf("expected variable target, got %T", assign.Target)
+	}
+	if _, ok := assign.Index.(ast.LiteralExpr); !ok {
+		t.Fatalf("expected literal index, got %T", assign.Index)
+	}
+	if _, ok := assign.Value.(ast.IndexExpr); !ok {
+		t.Fatalf("expected index expression on right side, got %T", assign.Value)
+	}
+}
+
 func parseSource(t *testing.T, source string) ([]ast.Stmt, error) {
 	t.Helper()
 

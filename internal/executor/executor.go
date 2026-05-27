@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 )
 
 type RuntimeError struct {
@@ -25,16 +26,23 @@ type Value struct {
 }
 
 func (v Value) String() string {
-	switch v.Type {
-	case ast.TypeInt:
+	switch v.Type.Kind {
+	case ast.TypeKindInt:
 		return strconv.Itoa(v.Data.(int))
-	case ast.TypeBool:
+	case ast.TypeKindBool:
 		if v.Data.(bool) {
 			return "true"
 		}
 		return "false"
-	case ast.TypeString:
+	case ast.TypeKindString:
 		return v.Data.(string)
+	case ast.TypeKindArray:
+		values := v.Data.([]Value)
+		parts := make([]string, 0, len(values))
+		for _, item := range values {
+			parts = append(parts, item.String())
+		}
+		return "[" + strings.Join(parts, ", ") + "]"
 	default:
 		return "<unknown>"
 	}
@@ -272,19 +280,19 @@ func (e *Executor) executeVarStatement(statement ast.VarStmt) error {
 		if err != nil {
 			return err
 		}
-		if variableType == ast.TypeUnknown {
+		if variableType.IsUnknown() {
 			variableType = initializerValue.Type
 		}
-		if variableType != ast.TypeUnknown && variableType != initializerValue.Type {
+		if !variableType.IsUnknown() && !e.isAssignable(variableType, initializerValue.Type) {
 			return runtimeError(statement.Name, "cannot initialize variable "+statement.Name.Value+" of type "+variableType.String()+" with value of type "+initializerValue.Type.String())
 		}
-		value = initializerValue
+		value = e.coerceValueType(initializerValue, variableType)
 		initialized = true
 	} else {
-		if variableType == ast.TypeUnknown && !e.options.CompatLoginov {
+		if variableType.IsUnknown() && !e.options.CompatLoginov {
 			return runtimeError(statement.Name, "variable "+statement.Name.Value+" requires an explicit type or initializer")
 		}
-		if variableType != ast.TypeUnknown {
+		if !variableType.IsUnknown() {
 			value = zeroValue(variableType)
 		}
 	}
@@ -299,6 +307,8 @@ func (e *Executor) evaluateExpression(expression ast.Expr) (Value, error) {
 	switch expr := expression.(type) {
 	case ast.LiteralExpr:
 		return literalValue(expr.Token)
+	case ast.ArrayExpr:
+		return e.evaluateArray(expr)
 	case ast.VariableExpr:
 		variable := e.environment.ResolveVariable(expr.Name.Value)
 		if variable == nil {
@@ -318,16 +328,21 @@ func (e *Executor) evaluateExpression(expression ast.Expr) (Value, error) {
 		if variable == nil {
 			return Value{}, runtimeError(expr.Name, "assignment to undeclared variable "+expr.Name.Value)
 		}
-		if variable.Type != ast.TypeUnknown && variable.Type != value.Type {
+		if !variable.Type.IsUnknown() && !e.isAssignable(variable.Type, value.Type) {
 			return Value{}, runtimeError(expr.Name, "cannot assign value of type "+value.Type.String()+" to variable "+expr.Name.Value+" of type "+variable.Type.String())
 		}
-		if variable.Type == ast.TypeUnknown {
+		if variable.Type.IsUnknown() {
 			variable.Type = value.Type
 		}
 
+		value = e.coerceValueType(value, variable.Type)
 		variable.Value = value
 		variable.Initialized = true
 		return value, nil
+	case ast.IndexExpr:
+		return e.evaluateIndex(expr)
+	case ast.IndexAssignExpr:
+		return e.evaluateIndexAssign(expr)
 	case ast.GroupingExpr:
 		return e.evaluateExpression(expr.Expression)
 	case ast.UnaryExpr:
@@ -343,6 +358,94 @@ func (e *Executor) evaluateExpression(expression ast.Expr) (Value, error) {
 	default:
 		return Value{}, RuntimeError{Message: "unsupported expression"}
 	}
+}
+
+func (e *Executor) evaluateArray(expression ast.ArrayExpr) (Value, error) {
+	values := make([]Value, 0, len(expression.Elements))
+	elementType := ast.TypeUnknown
+
+	for _, element := range expression.Elements {
+		value, err := e.evaluateExpression(element)
+		if err != nil {
+			return Value{}, err
+		}
+		if elementType.IsUnknown() && !value.Type.IsUnknown() {
+			elementType = value.Type
+		} else if !elementType.IsUnknown() && !value.Type.IsUnknown() && !e.isAssignable(elementType, value.Type) {
+			return Value{}, runtimeError(expressionToken(element), "array elements must have the same type, got "+elementType.String()+" and "+value.Type.String())
+		}
+		values = append(values, value)
+	}
+
+	arrayType := ast.ArrayOf(elementType)
+	for i, value := range values {
+		values[i] = e.coerceValueType(value, elementType)
+	}
+	return Value{Type: arrayType, Data: values}, nil
+}
+
+func (e *Executor) evaluateIndex(expression ast.IndexExpr) (Value, error) {
+	target, err := e.evaluateExpression(expression.Target)
+	if err != nil {
+		return Value{}, err
+	}
+	items, err := e.expectArray(target, expression.Bracket, "indexing requires an array value")
+	if err != nil {
+		return Value{}, err
+	}
+
+	indexValue, err := e.evaluateExpression(expression.Index)
+	if err != nil {
+		return Value{}, err
+	}
+	index, err := e.expectInt(indexValue, expression.Bracket, "array index must have type int")
+	if err != nil {
+		return Value{}, err
+	}
+	if index < 0 || index >= len(items) {
+		return Value{}, runtimeError(expression.Bracket, fmt.Sprintf("array index %d out of bounds for length %d", index, len(items)))
+	}
+	return items[index], nil
+}
+
+func (e *Executor) evaluateIndexAssign(expression ast.IndexAssignExpr) (Value, error) {
+	target, err := e.evaluateExpression(expression.Target)
+	if err != nil {
+		return Value{}, err
+	}
+	items, err := e.expectArray(target, expression.Bracket, "index assignment requires an array value")
+	if err != nil {
+		return Value{}, err
+	}
+
+	indexValue, err := e.evaluateExpression(expression.Index)
+	if err != nil {
+		return Value{}, err
+	}
+	index, err := e.expectInt(indexValue, expression.Bracket, "array index must have type int")
+	if err != nil {
+		return Value{}, err
+	}
+	if index < 0 || index >= len(items) {
+		return Value{}, runtimeError(expression.Bracket, fmt.Sprintf("array index %d out of bounds for length %d", index, len(items)))
+	}
+
+	value, err := e.evaluateExpression(expression.Value)
+	if err != nil {
+		return Value{}, err
+	}
+
+	elementType := ast.TypeUnknown
+	if target.Type.Element != nil {
+		elementType = *target.Type.Element
+	}
+	if !elementType.IsUnknown() && !value.Type.IsUnknown() && !e.isAssignable(elementType, value.Type) {
+		return Value{}, runtimeError(expression.Bracket, "cannot assign value of type "+value.Type.String()+" to array element of type "+elementType.String())
+	}
+
+	value = e.coerceValueType(value, elementType)
+	items[index] = value
+	return value, nil
 }
 
 func (e *Executor) evaluateCall(expression ast.CallExpr) (Value, error) {
@@ -383,12 +486,13 @@ func (e *Executor) callFunction(function *FunctionValue, arguments []Value) (Val
 	for index, parameter := range function.Declaration.Parameters {
 		argument := arguments[index]
 		parameterType := parameter.Type.Kind
-		if parameterType != ast.TypeUnknown && parameterType != argument.Type {
+		if !parameterType.IsUnknown() && !e.isAssignable(parameterType, argument.Type) {
 			return Value{}, runtimeError(parameter.Name, "cannot assign value of type "+argument.Type.String()+" to parameter "+parameter.Name.Value+" of type "+parameterType.String())
 		}
-		if parameterType == ast.TypeUnknown {
+		if parameterType.IsUnknown() {
 			parameterType = argument.Type
 		}
+		argument = e.coerceValueType(argument, parameterType)
 		if !e.environment.DefineVariable(parameter.Name.Value, parameterType, argument, true) {
 			return Value{}, runtimeError(parameter.Name, "name "+parameter.Name.Value+" is already declared in this scope")
 		}
@@ -399,12 +503,12 @@ func (e *Executor) callFunction(function *FunctionValue, arguments []Value) (Val
 		return Value{}, err
 	}
 	if !returned {
-		if function.Declaration.ReturnType.Kind == ast.TypeUnknown {
+		if function.Declaration.ReturnType.Kind.IsUnknown() {
 			return Value{Type: ast.TypeUnknown, Data: nil}, nil
 		}
 		return Value{}, runtimeError(function.Declaration.Name, "function "+function.Declaration.Name.Value+" did not return a value")
 	}
-	return value, nil
+	return e.coerceValueType(value, function.Declaration.ReturnType.Kind), nil
 }
 
 func (e *Executor) evaluateUnary(operator tok.Token, right Value) (Value, error) {
@@ -483,10 +587,10 @@ func (e *Executor) evaluateBinary(expression ast.BinaryExpr) (Value, error) {
 
 	switch expression.Operator.Type {
 	case tok.TokenPlus:
-		if left.Type == ast.TypeInt && right.Type == ast.TypeInt {
+		if left.Type.Equals(ast.TypeInt) && right.Type.Equals(ast.TypeInt) {
 			return Value{Type: ast.TypeInt, Data: left.Data.(int) + right.Data.(int)}, nil
 		}
-		if left.Type == ast.TypeString && right.Type == ast.TypeString {
+		if left.Type.Equals(ast.TypeString) && right.Type.Equals(ast.TypeString) {
 			return Value{Type: ast.TypeString, Data: left.Data.(string) + right.Data.(string)}, nil
 		}
 		return Value{}, runtimeError(expression.Operator, "operator + expects operands of type int or string")
@@ -553,17 +657,28 @@ func (e *Executor) evaluateIntComparison(operator tok.Token, left, right Value, 
 }
 
 func (e *Executor) expectInt(value Value, token tok.Token, message string) (int, error) {
-	if value.Type != ast.TypeInt {
+	if !value.Type.Equals(ast.TypeInt) {
 		return 0, runtimeError(token, message)
 	}
 	return value.Data.(int), nil
 }
 
 func (e *Executor) expectBool(value Value, token tok.Token, message string) (bool, error) {
-	if value.Type != ast.TypeBool {
+	if !value.Type.Equals(ast.TypeBool) {
 		return false, runtimeError(token, message)
 	}
 	return value.Data.(bool), nil
+}
+
+func (e *Executor) expectArray(value Value, token tok.Token, message string) ([]Value, error) {
+	if !value.Type.IsArray() {
+		return nil, runtimeError(token, message)
+	}
+	items, ok := value.Data.([]Value)
+	if !ok {
+		return nil, runtimeError(token, message)
+	}
+	return items, nil
 }
 
 func literalValue(token tok.Token) (Value, error) {
@@ -586,30 +701,44 @@ func literalValue(token tok.Token) (Value, error) {
 }
 
 func zeroValue(valueType ast.ValueType) Value {
-	switch valueType {
-	case ast.TypeInt:
+	switch valueType.Kind {
+	case ast.TypeKindInt:
 		return Value{Type: ast.TypeInt, Data: 0}
-	case ast.TypeBool:
+	case ast.TypeKindBool:
 		return Value{Type: ast.TypeBool, Data: false}
-	case ast.TypeString:
+	case ast.TypeKindString:
 		return Value{Type: ast.TypeString, Data: ""}
+	case ast.TypeKindArray:
+		return Value{Type: valueType, Data: []Value{}}
 	default:
 		return Value{Type: ast.TypeUnknown, Data: nil}
 	}
 }
 
 func valuesEqual(left, right Value) bool {
-	if left.Type != right.Type {
+	if !left.Type.Equals(right.Type) {
 		return false
 	}
 
-	switch left.Type {
-	case ast.TypeInt:
+	switch left.Type.Kind {
+	case ast.TypeKindInt:
 		return left.Data.(int) == right.Data.(int)
-	case ast.TypeBool:
+	case ast.TypeKindBool:
 		return left.Data.(bool) == right.Data.(bool)
-	case ast.TypeString:
+	case ast.TypeKindString:
 		return left.Data.(string) == right.Data.(string)
+	case ast.TypeKindArray:
+		leftItems := left.Data.([]Value)
+		rightItems := right.Data.([]Value)
+		if len(leftItems) != len(rightItems) {
+			return false
+		}
+		for i := range leftItems {
+			if !valuesEqual(leftItems[i], rightItems[i]) {
+				return false
+			}
+		}
+		return true
 	default:
 		return left.Data == right.Data
 	}
@@ -627,6 +756,8 @@ func expressionToken(expression ast.Expr) tok.Token {
 	switch expr := expression.(type) {
 	case ast.LiteralExpr:
 		return expr.Token
+	case ast.ArrayExpr:
+		return expr.Bracket
 	case ast.VariableExpr:
 		return expr.Name
 	case ast.UnaryExpr:
@@ -637,9 +768,50 @@ func expressionToken(expression ast.Expr) tok.Token {
 		return expr.Paren
 	case ast.AssignExpr:
 		return expr.Name
+	case ast.IndexExpr:
+		return expr.Bracket
+	case ast.IndexAssignExpr:
+		return expr.Bracket
 	case ast.GroupingExpr:
 		return expressionToken(expr.Expression)
 	default:
 		return tok.Token{}
 	}
+}
+
+func (e *Executor) isAssignable(target, value ast.ValueType) bool {
+	if target.IsUnknown() || value.IsUnknown() {
+		return true
+	}
+	if target.Kind != value.Kind {
+		return false
+	}
+	if target.Kind != ast.TypeKindArray {
+		return true
+	}
+	if target.Element == nil || value.Element == nil {
+		return target.Element == nil && value.Element == nil
+	}
+	return e.isAssignable(*target.Element, *value.Element)
+}
+
+func (e *Executor) coerceValueType(value Value, target ast.ValueType) Value {
+	if target.IsUnknown() || value.Type.Equals(target) {
+		return value
+	}
+	if !value.Type.IsArray() || !target.IsArray() {
+		value.Type = target
+		return value
+	}
+
+	items := value.Data.([]Value)
+	coercedItems := make([]Value, len(items))
+	elementType := ast.TypeUnknown
+	if target.Element != nil {
+		elementType = *target.Element
+	}
+	for i, item := range items {
+		coercedItems[i] = e.coerceValueType(item, elementType)
+	}
+	return Value{Type: target, Data: coercedItems}
 }

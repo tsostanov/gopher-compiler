@@ -146,6 +146,8 @@ var operators = map[string]tok.TokenType{
 	"!":  tok.TokenExcl,
 	"(":  tok.TokenLParen,
 	")":  tok.TokenRParen,
+	"[":  tok.TokenLBracket,
+	"]":  tok.TokenRBracket,
 	"{":  tok.TokenLBrace,
 	"}":  tok.TokenRBrace,
 	":":  tok.TokenColon,

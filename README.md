@@ -24,7 +24,7 @@ Small educational compiler front-end in Go. It includes:
 - `internal/semantic` - semantic analysis
 - `internal/optimizer` - AST optimization and verification
 - `internal/executor` - AST execution/runtime
-- `examples` - sample input programs
+- `examples` - sample input program
 
 ## Pipeline
 
@@ -42,6 +42,7 @@ The language supports:
 - function declarations: `func add(a: int, b: int): int { return a + b; }`
 - function calls: `add(1, 2)`
 - assignment: `x = 20;`
+- array literals and indexing: `[1, 2, 3]`, `xs[0]`, `xs[1] = 10`
 - return statements: `return x;`, `return;`
 - output: `print x;`
 - blocks: `{ ... }`
@@ -60,6 +61,7 @@ Available types:
 - `int`
 - `bool`
 - `string`
+- array types such as `int[]`, `bool[]`, `string[]`
 
 Strict-mode rules:
 
@@ -115,7 +117,6 @@ go run ./cmd/comp --mermaid examples/program.txt
 go run ./cmd/comp --semantic examples/program.txt
 go run ./cmd/comp --verify-optimization examples/program.txt
 go run ./cmd/comp --run examples/program.txt
-go run ./cmd/comp --compat-loginov examples/loginov_style/functions.txt
 ```
 
 `--run` executes the optimized AST.
@@ -166,22 +167,19 @@ With `--compat-loginov`, the compiler also accepts:
 - `var x;`
 - `return;`
 
-Examples for this mode live in `examples/loginov_style`.
-
 ## Example Program
 
 `examples/program.txt`:
 
 ```txt
-func classify(total: int): string {
-	if (total >= 20) {
-		return "large";
-	}
-	return "small";
-}
+var numbers: int[] = [1 + 2, 4 * 2, 10 - 3];
+print numbers[0];
 
-var total: int = 57;
-print classify(total);
+numbers[1] = numbers[0] + numbers[2];
+print numbers[1];
+
+numbers = [8, 13, 21, 30 + 4];
+print numbers[3];
 ```
 
 ## Tests

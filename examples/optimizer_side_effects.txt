@@ -1,7 +1,0 @@
-func get(): int {
-	print "called";
-	return 2;
-}
-
-print get() + 3;
-print "a" + "b";

@@ -118,6 +118,25 @@ func (o *Optimizer) OptimizeExpression(expr ast.Expr) ast.Expr {
 		return optimized
 	case ast.AssignExpr:
 		return ast.AssignExpr{Name: e.Name, Value: o.OptimizeExpression(e.Value)}
+	case ast.ArrayExpr:
+		elements := make([]ast.Expr, 0, len(e.Elements))
+		for _, element := range e.Elements {
+			elements = append(elements, o.OptimizeExpression(element))
+		}
+		return ast.ArrayExpr{Bracket: e.Bracket, Elements: elements}
+	case ast.IndexExpr:
+		return ast.IndexExpr{
+			Target:  o.OptimizeExpression(e.Target),
+			Bracket: e.Bracket,
+			Index:   o.OptimizeExpression(e.Index),
+		}
+	case ast.IndexAssignExpr:
+		return ast.IndexAssignExpr{
+			Target:  o.OptimizeExpression(e.Target),
+			Bracket: e.Bracket,
+			Index:   o.OptimizeExpression(e.Index),
+			Value:   o.OptimizeExpression(e.Value),
+		}
 	case ast.CallExpr:
 		arguments := make([]ast.Expr, 0, len(e.Arguments))
 		for _, argument := range e.Arguments {

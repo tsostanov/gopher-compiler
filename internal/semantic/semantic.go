@@ -283,7 +283,7 @@ func (a *SemanticAnalyzer) visitVarStatement(statement ast.VarStmt) {
 	}
 
 	variableType := declaredType
-	if variableType == ast.TypeUnknown {
+	if variableType.IsUnknown() {
 		variableType = initializerType
 	}
 
@@ -297,7 +297,7 @@ func (a *SemanticAnalyzer) visitVarStatement(statement ast.VarStmt) {
 	if statement.DeclaredType == nil && statement.Initializer == nil && !a.options.CompatLoginov {
 		a.errorAt(statement.Name, "variable "+statement.Name.Value+" requires an explicit type or initializer")
 	}
-	if declaredType != ast.TypeUnknown && initializerType != ast.TypeUnknown && !a.isAssignable(declaredType, initializerType) {
+	if !declaredType.IsUnknown() && !initializerType.IsUnknown() && !a.isAssignable(declaredType, initializerType) {
 		a.errorAt(statement.Name, "cannot initialize variable "+statement.Name.Value+" of type "+declaredType.String()+" with value of type "+initializerType.String())
 	}
 	if statement.Initializer != nil {
@@ -328,7 +328,7 @@ func (a *SemanticAnalyzer) visitFunctionBody(statement ast.FuncStmt, function *F
 
 	a.analyzeStatements(statement.Body.Statements)
 
-	if statement.ReturnType.Kind != ast.TypeUnknown && !guaranteesReturnBlock(statement.Body) {
+	if !statement.ReturnType.Kind.IsUnknown() && !guaranteesReturnBlock(statement.Body) {
 		a.errorAt(statement.Name, "function "+statement.Name.Value+" may not return a value on all paths")
 	}
 }
@@ -340,7 +340,7 @@ func (a *SemanticAnalyzer) visitReturnStatement(statement ast.ReturnStmt) {
 	}
 
 	if statement.Value == nil {
-		if a.currentFunction.ReturnType != ast.TypeUnknown {
+		if !a.currentFunction.ReturnType.IsUnknown() {
 			a.errorAt(statement.Keyword, "cannot return without value from function "+a.currentFunction.Name+" with return type "+a.currentFunction.ReturnType.String())
 		}
 		return
@@ -356,6 +356,8 @@ func (a *SemanticAnalyzer) VisitExpression(expression ast.Expr) ast.ValueType {
 	switch e := expression.(type) {
 	case ast.LiteralExpr:
 		return literalType(e.Token)
+	case ast.ArrayExpr:
+		return a.visitArrayExpression(e)
 	case ast.VariableExpr:
 		variable := a.environment.ResolveVariable(e.Name.Value)
 		if variable == nil || !variable.Flags.Defined {
@@ -376,15 +378,19 @@ func (a *SemanticAnalyzer) VisitExpression(expression ast.Expr) ast.ValueType {
 			a.errorAt(e.Name, "assignment to undeclared variable "+e.Name.Value)
 			return ast.TypeUnknown
 		}
-		if variable.Type != ast.TypeUnknown && valueType != ast.TypeUnknown && !a.isAssignable(variable.Type, valueType) {
+		if !variable.Type.IsUnknown() && !valueType.IsUnknown() && !a.isAssignable(variable.Type, valueType) {
 			a.errorAt(e.Name, "cannot assign value of type "+valueType.String()+" to variable "+e.Name.Value+" of type "+variable.Type.String())
 		}
-		if variable.Type == ast.TypeUnknown && valueType != ast.TypeUnknown {
+		if variable.Type.IsUnknown() && !valueType.IsUnknown() {
 			variable.Type = valueType
 		}
 
 		variable.Flags.Initialized = true
 		return variable.Type
+	case ast.IndexExpr:
+		return a.visitIndexExpression(e)
+	case ast.IndexAssignExpr:
+		return a.visitIndexAssignExpression(e)
 	case ast.BinaryExpr:
 		leftType := a.VisitExpression(e.Left)
 		rightType := a.VisitExpression(e.Right)
@@ -398,6 +404,62 @@ func (a *SemanticAnalyzer) VisitExpression(expression ast.Expr) ast.ValueType {
 		return a.visitCallExpression(e)
 	}
 	return ast.TypeUnknown
+}
+
+func (a *SemanticAnalyzer) visitArrayExpression(expression ast.ArrayExpr) ast.ValueType {
+	elementType := ast.TypeUnknown
+
+	for _, element := range expression.Elements {
+		currentType := a.VisitExpression(element)
+		if elementType.IsUnknown() && !currentType.IsUnknown() {
+			elementType = currentType
+			continue
+		}
+		if currentType.IsUnknown() {
+			continue
+		}
+		if !a.isAssignable(elementType, currentType) || !a.isAssignable(currentType, elementType) {
+			a.errorAt(expressionToken(element), "array elements must have the same type, got "+elementType.String()+" and "+currentType.String())
+		}
+	}
+
+	return ast.ArrayOf(elementType)
+}
+
+func (a *SemanticAnalyzer) visitIndexExpression(expression ast.IndexExpr) ast.ValueType {
+	targetType := a.VisitExpression(expression.Target)
+	indexType := a.VisitExpression(expression.Index)
+
+	a.requireType(indexType, ast.TypeInt, expression.Index, "array index must have type int")
+	if targetType.IsUnknown() {
+		return ast.TypeUnknown
+	}
+	if !targetType.IsArray() {
+		a.errorAt(expression.Bracket, "indexing requires an array value")
+		return ast.TypeUnknown
+	}
+	return *targetType.Element
+}
+
+func (a *SemanticAnalyzer) visitIndexAssignExpression(expression ast.IndexAssignExpr) ast.ValueType {
+	targetType := a.VisitExpression(expression.Target)
+	indexType := a.VisitExpression(expression.Index)
+	valueType := a.VisitExpression(expression.Value)
+
+	a.requireType(indexType, ast.TypeInt, expression.Index, "array index must have type int")
+	if targetType.IsUnknown() {
+		return valueType
+	}
+	if !targetType.IsArray() {
+		a.errorAt(expression.Bracket, "index assignment requires an array value")
+		return ast.TypeUnknown
+	}
+
+	elementType := *targetType.Element
+	if !elementType.IsUnknown() && !valueType.IsUnknown() && !a.isAssignable(elementType, valueType) {
+		a.errorAt(expressionToken(expression.Value), "cannot assign value of type "+valueType.String()+" to array element of type "+elementType.String())
+	}
+	return elementType
 }
 
 func (a *SemanticAnalyzer) visitCallExpression(expression ast.CallExpr) ast.ValueType {
@@ -521,28 +583,37 @@ func (a *SemanticAnalyzer) warningAt(token tok.Token, message string) {
 }
 
 func (a *SemanticAnalyzer) requireType(actual, expected ast.ValueType, expression ast.Expr, message string) {
-	if actual == ast.TypeUnknown || actual == expected {
+	if actual.IsUnknown() || actual.Equals(expected) {
 		return
 	}
 	a.errorAt(expressionToken(expression), message)
 }
 
 func (a *SemanticAnalyzer) isAssignable(target, value ast.ValueType) bool {
-	if target == ast.TypeUnknown || value == ast.TypeUnknown {
+	if target.IsUnknown() || value.IsUnknown() {
 		return true
 	}
-	return target == value
+	if target.Kind != value.Kind {
+		return false
+	}
+	if target.Kind != ast.TypeKindArray {
+		return true
+	}
+	if target.Element == nil || value.Element == nil {
+		return target.Element == nil && value.Element == nil
+	}
+	return a.isAssignable(*target.Element, *value.Element)
 }
 
 func (a *SemanticAnalyzer) checkUnaryExpression(expression ast.UnaryExpr, rightType ast.ValueType) ast.ValueType {
 	switch expression.Operator.Type {
 	case tok.TokenMinus:
-		if rightType != ast.TypeUnknown && rightType != ast.TypeInt {
+		if !rightType.IsUnknown() && !rightType.Equals(ast.TypeInt) {
 			a.errorAt(expression.Operator, "operator - expects operand of type int")
 		}
 		return ast.TypeInt
 	case tok.TokenExcl:
-		if rightType != ast.TypeUnknown && rightType != ast.TypeBool {
+		if !rightType.IsUnknown() && !rightType.Equals(ast.TypeBool) {
 			a.errorAt(expression.Operator, "operator ! expects operand of type bool")
 		}
 		return ast.TypeBool
@@ -554,43 +625,43 @@ func (a *SemanticAnalyzer) checkUnaryExpression(expression ast.UnaryExpr, rightT
 func (a *SemanticAnalyzer) checkBinaryExpression(expression ast.BinaryExpr, leftType, rightType ast.ValueType) ast.ValueType {
 	switch expression.Operator.Type {
 	case tok.TokenPlus:
-		if leftType == ast.TypeUnknown || rightType == ast.TypeUnknown {
+		if leftType.IsUnknown() || rightType.IsUnknown() {
 			return ast.TypeUnknown
 		}
-		if leftType == ast.TypeInt && rightType == ast.TypeInt {
+		if leftType.Equals(ast.TypeInt) && rightType.Equals(ast.TypeInt) {
 			return ast.TypeInt
 		}
-		if leftType == ast.TypeString && rightType == ast.TypeString {
+		if leftType.Equals(ast.TypeString) && rightType.Equals(ast.TypeString) {
 			return ast.TypeString
 		}
 		a.errorAt(expression.Operator, "operator + expects operands of type int or string")
 		return ast.TypeUnknown
 	case tok.TokenMinus, tok.TokenStar, tok.TokenSlash:
-		if leftType != ast.TypeUnknown && leftType != ast.TypeInt {
+		if !leftType.IsUnknown() && !leftType.Equals(ast.TypeInt) {
 			a.errorAt(expression.Operator, "arithmetic operators expect operands of type int")
 		}
-		if rightType != ast.TypeUnknown && rightType != ast.TypeInt {
+		if !rightType.IsUnknown() && !rightType.Equals(ast.TypeInt) {
 			a.errorAt(expression.Operator, "arithmetic operators expect operands of type int")
 		}
 		return ast.TypeInt
 	case tok.TokenAnd, tok.TokenOr:
-		if leftType != ast.TypeUnknown && leftType != ast.TypeBool {
+		if !leftType.IsUnknown() && !leftType.Equals(ast.TypeBool) {
 			a.errorAt(expression.Operator, "logical operators expect operands of type bool")
 		}
-		if rightType != ast.TypeUnknown && rightType != ast.TypeBool {
+		if !rightType.IsUnknown() && !rightType.Equals(ast.TypeBool) {
 			a.errorAt(expression.Operator, "logical operators expect operands of type bool")
 		}
 		return ast.TypeBool
 	case tok.TokenLt, tok.TokenLtEq, tok.TokenGt, tok.TokenGtEq:
-		if leftType != ast.TypeUnknown && leftType != ast.TypeInt {
+		if !leftType.IsUnknown() && !leftType.Equals(ast.TypeInt) {
 			a.errorAt(expression.Operator, "comparison operators expect operands of type int")
 		}
-		if rightType != ast.TypeUnknown && rightType != ast.TypeInt {
+		if !rightType.IsUnknown() && !rightType.Equals(ast.TypeInt) {
 			a.errorAt(expression.Operator, "comparison operators expect operands of type int")
 		}
 		return ast.TypeBool
 	case tok.TokenEqEq, tok.TokenNeq:
-		if leftType != ast.TypeUnknown && rightType != ast.TypeUnknown && leftType != rightType {
+		if !leftType.IsUnknown() && !rightType.IsUnknown() && !leftType.Equals(rightType) {
 			a.errorAt(expression.Operator, "equality operators require operands of the same type")
 		}
 		return ast.TypeBool
@@ -601,7 +672,7 @@ func (a *SemanticAnalyzer) checkBinaryExpression(expression ast.BinaryExpr, left
 
 func (a *SemanticAnalyzer) constantBoolValue(expression ast.Expr) (bool, bool) {
 	value, ok := a.constantValue(expression)
-	if !ok || value.valueType != ast.TypeBool {
+	if !ok || !value.valueType.Equals(ast.TypeBool) {
 		return false, false
 	}
 	return true, value.data.(bool)
@@ -629,12 +700,12 @@ func (a *SemanticAnalyzer) constantValue(expression ast.Expr) (constantValue, bo
 		}
 		switch e.Operator.Type {
 		case tok.TokenExcl:
-			if right.valueType != ast.TypeBool {
+			if !right.valueType.Equals(ast.TypeBool) {
 				return constantValue{}, false
 			}
 			return constantValue{valueType: ast.TypeBool, data: !right.data.(bool)}, true
 		case tok.TokenMinus:
-			if right.valueType != ast.TypeInt {
+			if !right.valueType.Equals(ast.TypeInt) {
 				return constantValue{}, false
 			}
 			return constantValue{valueType: ast.TypeInt, data: -right.data.(int)}, true
@@ -651,32 +722,32 @@ func (a *SemanticAnalyzer) constantValue(expression ast.Expr) (constantValue, bo
 
 		switch e.Operator.Type {
 		case tok.TokenEqEq:
-			if left.valueType != right.valueType {
+			if !left.valueType.Equals(right.valueType) {
 				return constantValue{}, false
 			}
 			return constantValue{valueType: ast.TypeBool, data: left.data == right.data}, true
 		case tok.TokenNeq:
-			if left.valueType != right.valueType {
+			if !left.valueType.Equals(right.valueType) {
 				return constantValue{}, false
 			}
 			return constantValue{valueType: ast.TypeBool, data: left.data != right.data}, true
 		case tok.TokenLt:
-			if left.valueType != ast.TypeInt || right.valueType != ast.TypeInt {
+			if !left.valueType.Equals(ast.TypeInt) || !right.valueType.Equals(ast.TypeInt) {
 				return constantValue{}, false
 			}
 			return constantValue{valueType: ast.TypeBool, data: left.data.(int) < right.data.(int)}, true
 		case tok.TokenLtEq:
-			if left.valueType != ast.TypeInt || right.valueType != ast.TypeInt {
+			if !left.valueType.Equals(ast.TypeInt) || !right.valueType.Equals(ast.TypeInt) {
 				return constantValue{}, false
 			}
 			return constantValue{valueType: ast.TypeBool, data: left.data.(int) <= right.data.(int)}, true
 		case tok.TokenGt:
-			if left.valueType != ast.TypeInt || right.valueType != ast.TypeInt {
+			if !left.valueType.Equals(ast.TypeInt) || !right.valueType.Equals(ast.TypeInt) {
 				return constantValue{}, false
 			}
 			return constantValue{valueType: ast.TypeBool, data: left.data.(int) > right.data.(int)}, true
 		case tok.TokenGtEq:
-			if left.valueType != ast.TypeInt || right.valueType != ast.TypeInt {
+			if !left.valueType.Equals(ast.TypeInt) || !right.valueType.Equals(ast.TypeInt) {
 				return constantValue{}, false
 			}
 			return constantValue{valueType: ast.TypeBool, data: left.data.(int) >= right.data.(int)}, true
@@ -725,6 +796,8 @@ func expressionToken(expression ast.Expr) tok.Token {
 	switch e := expression.(type) {
 	case ast.LiteralExpr:
 		return e.Token
+	case ast.ArrayExpr:
+		return e.Bracket
 	case ast.VariableExpr:
 		return e.Name
 	case ast.UnaryExpr:
@@ -735,6 +808,10 @@ func expressionToken(expression ast.Expr) tok.Token {
 		return e.Paren
 	case ast.AssignExpr:
 		return e.Name
+	case ast.IndexExpr:
+		return e.Bracket
+	case ast.IndexAssignExpr:
+		return e.Bracket
 	case ast.GroupingExpr:
 		return expressionToken(e.Expression)
 	default:

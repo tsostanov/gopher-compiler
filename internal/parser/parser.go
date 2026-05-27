@@ -329,6 +329,14 @@ func (p *Parser) parseAssignment() (ast.Expr, error) {
 		if varExpr, ok := expr.(ast.VariableExpr); ok {
 			return ast.AssignExpr{Name: varExpr.Name, Value: value}, nil
 		}
+		if indexExpr, ok := expr.(ast.IndexExpr); ok {
+			return ast.IndexAssignExpr{
+				Target:  indexExpr.Target,
+				Bracket: indexExpr.Bracket,
+				Index:   indexExpr.Index,
+				Value:   value,
+			}, nil
+		}
 
 		return nil, ParseError{
 			Message: "invalid assignment target",
@@ -461,29 +469,43 @@ func (p *Parser) parseCall() (ast.Expr, error) {
 	}
 
 	for {
-		if !p.match(tok.TokenLParen) {
-			break
-		}
-
-		paren := p.previous()
-		var arguments []ast.Expr
-		if !p.check(tok.TokenRParen) {
-			for {
-				argument, err := p.parseExpression()
-				if err != nil {
-					return nil, err
-				}
-				arguments = append(arguments, argument)
-				if !p.match(tok.TokenComma) {
-					break
+		if p.match(tok.TokenLParen) {
+			paren := p.previous()
+			var arguments []ast.Expr
+			if !p.check(tok.TokenRParen) {
+				for {
+					argument, err := p.parseExpression()
+					if err != nil {
+						return nil, err
+					}
+					arguments = append(arguments, argument)
+					if !p.match(tok.TokenComma) {
+						break
+					}
 				}
 			}
+
+			if _, err := p.consume(tok.TokenRParen, "expected ')' after arguments"); err != nil {
+				return nil, err
+			}
+			expr = ast.CallExpr{Callee: expr, Paren: paren, Arguments: arguments}
+			continue
 		}
 
-		if _, err := p.consume(tok.TokenRParen, "expected ')' after arguments"); err != nil {
-			return nil, err
+		if p.match(tok.TokenLBracket) {
+			bracket := p.previous()
+			index, err := p.parseExpression()
+			if err != nil {
+				return nil, err
+			}
+			if _, err := p.consume(tok.TokenRBracket, "expected ']' after index"); err != nil {
+				return nil, err
+			}
+			expr = ast.IndexExpr{Target: expr, Bracket: bracket, Index: index}
+			continue
 		}
-		expr = ast.CallExpr{Callee: expr, Paren: paren, Arguments: arguments}
+
+		break
 	}
 
 	return expr, nil
@@ -492,6 +514,26 @@ func (p *Parser) parseCall() (ast.Expr, error) {
 func (p *Parser) parsePrimary() (ast.Expr, error) {
 	if p.match(tok.TokenNumber, tok.TokenString, tok.TokenTrue, tok.TokenFalse) {
 		return ast.LiteralExpr{Token: p.previous()}, nil
+	}
+	if p.match(tok.TokenLBracket) {
+		bracket := p.previous()
+		var elements []ast.Expr
+		if !p.check(tok.TokenRBracket) {
+			for {
+				element, err := p.parseExpression()
+				if err != nil {
+					return nil, err
+				}
+				elements = append(elements, element)
+				if !p.match(tok.TokenComma) {
+					break
+				}
+			}
+		}
+		if _, err := p.consume(tok.TokenRBracket, "expected ']' after array literal"); err != nil {
+			return nil, err
+		}
+		return ast.ArrayExpr{Bracket: bracket, Elements: elements}, nil
 	}
 	if p.match(tok.TokenID) {
 		return ast.VariableExpr{Name: p.previous()}, nil
@@ -516,16 +558,19 @@ func (p *Parser) parsePrimary() (ast.Expr, error) {
 }
 
 func (p *Parser) parseTypeAnnotation() (*ast.TypeAnnotation, error) {
+	var valueType ast.ValueType
+	var name tok.Token
+
 	switch {
 	case p.match(tok.TokenInt):
-		token := p.previous()
-		return &ast.TypeAnnotation{Name: token, Kind: ast.TypeInt}, nil
+		name = p.previous()
+		valueType = ast.TypeInt
 	case p.match(tok.TokenBool):
-		token := p.previous()
-		return &ast.TypeAnnotation{Name: token, Kind: ast.TypeBool}, nil
+		name = p.previous()
+		valueType = ast.TypeBool
 	case p.match(tok.TokenStringType):
-		token := p.previous()
-		return &ast.TypeAnnotation{Name: token, Kind: ast.TypeString}, nil
+		name = p.previous()
+		valueType = ast.TypeString
 	default:
 		token := p.peek()
 		return nil, ParseError{
@@ -534,6 +579,15 @@ func (p *Parser) parseTypeAnnotation() (*ast.TypeAnnotation, error) {
 			Column:  token.Column,
 		}
 	}
+
+	for p.match(tok.TokenLBracket) {
+		if _, err := p.consume(tok.TokenRBracket, "expected ']' after '[' in array type"); err != nil {
+			return nil, err
+		}
+		valueType = ast.ArrayOf(valueType)
+	}
+
+	return &ast.TypeAnnotation{Name: name, Kind: valueType}, nil
 }
 
 func (p *Parser) synchronize() {

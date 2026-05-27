@@ -200,3 +200,32 @@ print "ok";
 		t.Fatalf("expected output %q, got %q", "ok\n", output)
 	}
 }
+
+func TestExecutorSupportsArrays(t *testing.T) {
+	output, err := executeSource(t, `
+var xs: int[] = [1, 2, 3];
+xs[1] = xs[0] + xs[2];
+print xs[1];
+print xs[0];
+`)
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+
+	if output != "4\n1\n" {
+		t.Fatalf("expected output %q, got %q", "4\n1\n", output)
+	}
+}
+
+func TestExecutorReportsArrayIndexOutOfBounds(t *testing.T) {
+	_, err := executeSource(t, `
+var xs = [1, 2];
+print xs[2];
+`)
+	if err == nil {
+		t.Fatalf("expected runtime error")
+	}
+	if !strings.Contains(err.Error(), "out of bounds") {
+		t.Fatalf("expected out of bounds error, got %v", err)
+	}
+}

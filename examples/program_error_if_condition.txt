@@ -1,4 +1,0 @@
-var name: string = "Timur";
-if (name + " Sostanov") {
-	print name;
-}

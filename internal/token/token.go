@@ -36,6 +36,8 @@ const (
 	TokenOr
 	TokenLParen
 	TokenRParen
+	TokenLBracket
+	TokenRBracket
 	TokenLBrace
 	TokenRBrace
 	TokenColon
@@ -76,6 +78,8 @@ var tokenTypeNames = []string{
 	"OR",
 	"LPAREN",
 	"RPAREN",
+	"LBRACKET",
+	"RBRACKET",
 	"LBRACE",
 	"RBRACE",
 	"COLON",

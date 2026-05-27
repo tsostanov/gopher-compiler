@@ -319,6 +319,50 @@ while (false) {
 	assertHasDiagnostic(t, diagnostics, SeverityWarning, "while body never executes")
 }
 
+func TestSemanticAnalyzerSupportsArrays(t *testing.T) {
+	diagnostics := analyzeSource(t, `
+var xs: int[] = [1, 2, 3];
+xs[1] = xs[0];
+print xs[2];
+`)
+
+	assertNoDiagnostic(t, diagnostics, SeverityError, "array")
+	assertNoDiagnostic(t, diagnostics, SeverityError, "index")
+}
+
+func TestSemanticAnalyzerRejectsMixedArrayElementTypes(t *testing.T) {
+	diagnostics := analyzeSource(t, `var xs = [1, true];`)
+
+	assertHasDiagnostic(t, diagnostics, SeverityError, "array elements must have the same type")
+}
+
+func TestSemanticAnalyzerRejectsNonIntArrayIndex(t *testing.T) {
+	diagnostics := analyzeSource(t, `
+var xs = [1, 2];
+print xs[true];
+`)
+
+	assertHasDiagnostic(t, diagnostics, SeverityError, "array index must have type int")
+}
+
+func TestSemanticAnalyzerRejectsIndexingNonArray(t *testing.T) {
+	diagnostics := analyzeSource(t, `
+var x = 1;
+print x[0];
+`)
+
+	assertHasDiagnostic(t, diagnostics, SeverityError, "indexing requires an array value")
+}
+
+func TestSemanticAnalyzerRejectsWrongArrayElementAssignmentType(t *testing.T) {
+	diagnostics := analyzeSource(t, `
+var xs: int[] = [1];
+xs[0] = false;
+`)
+
+	assertHasDiagnostic(t, diagnostics, SeverityError, "cannot assign value of type bool to array element of type int")
+}
+
 func analyzeSource(t *testing.T, source string) []SemanticDiagnostic {
 	t.Helper()
 

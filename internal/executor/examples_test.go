@@ -19,27 +19,58 @@ func TestExecutorRunsMainExampleProgram(t *testing.T) {
 		t.Fatalf("execute failed: %v", err)
 	}
 
-	expected := "large\n57\n0\n1\n2\n"
+	expected := "3\n10\n34\n"
 	if output != expected {
 		t.Fatalf("expected output %q, got %q", expected, output)
 	}
 }
 
-func TestExecutorRunsLoginovCompatibilityExamples(t *testing.T) {
+func TestExecutorRunsCompatibilityPrograms(t *testing.T) {
 	testCases := []struct {
 		name     string
+		source   string
 		expected string
 	}{
-		{name: "loginov_style/basic.txt", expected: "10\n"},
-		{name: "loginov_style/functions.txt", expected: "15\n"},
-		{name: "loginov_style/if_while.txt", expected: "0\nmiddle\n2\n"},
+		{
+			name: "basic",
+			source: `
+var x;
+x = 10;
+print x;
+`,
+			expected: "10\n",
+		},
+		{
+			name: "functions",
+			source: `
+fun add(a, b) {
+	return a + b;
+}
+print add(7, 8);
+`,
+			expected: "15\n",
+		},
+		{
+			name: "if_while",
+			source: `
+var i;
+i = 0;
+while (i < 3) {
+	if (i == 1) {
+		print "middle";
+	} else {
+		print i;
+	}
+	i = i + 1;
+}
+`,
+			expected: "0\nmiddle\n2\n",
+		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			source := readExampleFile(t, tc.name)
-
-			output, err := executeSourceWithOptions(t, source, options.Mode{CompatLoginov: true})
+			output, err := executeSourceWithOptions(t, tc.source, options.Mode{CompatLoginov: true})
 			if err != nil {
 				t.Fatalf("execute failed: %v", err)
 			}

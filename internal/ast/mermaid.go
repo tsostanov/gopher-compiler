@@ -105,6 +105,23 @@ func (g *MermaidGenerator) visitExpression(expr Expr) string {
 		node := g.addNode("Assign: " + e.Name.Value)
 		g.addEdge(node, g.visitExpression(e.Value), "value")
 		return node
+	case ArrayExpr:
+		node := g.addNode("Array")
+		for _, element := range e.Elements {
+			g.addEdge(node, g.visitExpression(element), "item")
+		}
+		return node
+	case IndexExpr:
+		node := g.addNode("Index")
+		g.addEdge(node, g.visitExpression(e.Target), "target")
+		g.addEdge(node, g.visitExpression(e.Index), "index")
+		return node
+	case IndexAssignExpr:
+		node := g.addNode("IndexAssign")
+		g.addEdge(node, g.visitExpression(e.Target), "target")
+		g.addEdge(node, g.visitExpression(e.Index), "index")
+		g.addEdge(node, g.visitExpression(e.Value), "value")
+		return node
 	case CallExpr:
 		node := g.addNode("Call")
 		g.addEdge(node, g.visitExpression(e.Callee), "callee")

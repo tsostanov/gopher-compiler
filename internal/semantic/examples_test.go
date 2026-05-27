@@ -22,24 +22,53 @@ func TestExamplesProgramIsSemanticallyValid(t *testing.T) {
 	}
 }
 
-func TestLoginovStyleExamplesBehaveInCompatibilityMode(t *testing.T) {
-	testCases := []string{
-		"loginov_style/basic.txt",
-		"loginov_style/functions.txt",
-		"loginov_style/if_while.txt",
-		"loginov_style/mermaid.txt",
+func TestCompatibilityModeProgramsBehaveInCompatibilityMode(t *testing.T) {
+	testCases := []struct {
+		name   string
+		source string
+	}{
+		{
+			name: "basic",
+			source: `
+var x;
+x = 10;
+print x;
+`,
+		},
+		{
+			name: "functions",
+			source: `
+fun add(a, b) {
+	return a + b;
+}
+print add(7, 8);
+`,
+		},
+		{
+			name: "if_while",
+			source: `
+var i;
+i = 0;
+while (i < 3) {
+	if (i == 1) {
+		print "middle";
+	} else {
+		print i;
+	}
+	i = i + 1;
+}
+`,
+		},
 	}
 
-	for _, name := range testCases {
-		t.Run(name, func(t *testing.T) {
-			source := readExampleFile(t, name)
-
-			diagnostics, err := analyzeExampleSourceWithOptions(source, options.Mode{CompatLoginov: true})
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			diagnostics, err := analyzeExampleSourceWithOptions(tc.source, options.Mode{CompatLoginov: true})
 			if err != nil {
-				t.Fatalf("expected example %s to parse, got %v", name, err)
+				t.Fatalf("expected example %s to parse, got %v", tc.name, err)
 			}
 			if hasErrorDiagnostics(diagnostics) {
-				t.Fatalf("expected no semantic errors for %s, got %#v", name, diagnostics)
+				t.Fatalf("expected no semantic errors for %s, got %#v", tc.name, diagnostics)
 			}
 		})
 	}
@@ -48,23 +77,22 @@ func TestLoginovStyleExamplesBehaveInCompatibilityMode(t *testing.T) {
 func TestExampleErrorProgramsFailAsExpected(t *testing.T) {
 	testCases := []struct {
 		name          string
+		source        string
 		expectedError string
 		parseError    bool
 	}{
-		{name: "program_bad_type_name.txt", expectedError: "expected variable name", parseError: true},
-		{name: "program_unknown_type.txt", expectedError: "expected type name", parseError: true},
-		{name: "program_error_if_condition.txt", expectedError: "if condition must have type bool"},
-		{name: "program_error_string_compare.txt", expectedError: "comparison operators expect operands of type int"},
-		{name: "program_error_types.txt", expectedError: "cannot assign value of type int to variable flag of type bool"},
-		{name: "program_error_undeclared.txt", expectedError: "use of undeclared variable x"},
-		{name: "program_error_uninitialized.txt", expectedError: "used before initialization"},
+		{name: "bad_type_name", source: `var int: int = 1;`, expectedError: "expected variable name", parseError: true},
+		{name: "unknown_type", source: `var x: number = 1;`, expectedError: "expected type name", parseError: true},
+		{name: "if_condition", source: `if (1) { print 1; }`, expectedError: "if condition must have type bool"},
+		{name: "string_compare", source: `print "a" < "b";`, expectedError: "comparison operators expect operands of type int"},
+		{name: "types", source: `var flag: bool = true; flag = 1;`, expectedError: "cannot assign value of type int to variable flag of type bool"},
+		{name: "undeclared", source: `print x;`, expectedError: "use of undeclared variable x"},
+		{name: "uninitialized", source: `var x: int; print x;`, expectedError: "used before initialization"},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			source := readExampleFile(t, tc.name)
-
-			diagnostics, err := analyzeExampleSource(source)
+			diagnostics, err := analyzeExampleSource(tc.source)
 			if tc.parseError {
 				if err == nil {
 					t.Fatalf("expected parse error containing %q", tc.expectedError)

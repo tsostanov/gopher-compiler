@@ -1,34 +1,8 @@
-func adjust(base: int, delta: int): int {
-	return base + delta;
-}
+var numbers: int[] = [1 + 2, 4 * 2, 10 - 3];
+print numbers[0];
 
-func classify(total: int): string {
-	if (total >= 20) {
-		return "large";
-	}
-	return "small";
-}
+numbers[1] = numbers[0] + numbers[2];
+print numbers[1];
 
-var a: int = 10;
-var b: int = 4;
-var total = adjust(a * (b + 2), -3);
-var isLarge: bool = total >= 20 and a != b;
-var label: string = classify(total);
-
-if (isLarge) {
-	print label;
-} else {
-	print "small";
-}
-
-if (a > b) {
-	print total;
-} else {
-	print a + b;
-}
-
-var counter: int = 0;
-while (counter < 3) {
-	print counter;
-	counter = counter + 1;
-}
+numbers = [8, 13, 21, 30 + 4];
+print numbers[3];

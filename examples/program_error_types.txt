@@ -1,3 +1,0 @@
-var flag: bool = true;
-flag = 1;
-print flag;
