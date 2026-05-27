@@ -6,3 +6,10 @@ print numbers[1];
 
 numbers = [8, 13, 21, 30 + 4];
 print numbers[3];
+
+var words: string[] = ["com" + "pi", "ler"];
+words[0] = words[0] + words[1];
+print words[0];
+
+var flags: bool[] = [true, false, 10 > 3];
+print flags[2];

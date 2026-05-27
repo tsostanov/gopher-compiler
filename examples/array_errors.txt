@@ -1,0 +1,31 @@
+// Array error examples.
+// Run:
+// go run ./cmd/interpreter-demo ./examples/array_errors.txt
+//
+// Keep only one active block at a time.
+
+// 1. Mixed element types:
+var mixed = [1, true];
+
+// 2. Non-int index:
+// var xs = [1, 2];
+// print xs[true];
+
+// 3. Indexing a non-array:
+// var x = 1;
+// print x[0];
+
+// 4. Wrong type in index assignment:
+// var ints: int[] = [1];
+// ints[0] = false;
+
+// 5. Wrong array initializer type:
+// var badInit: int[] = ["a", "b"];
+
+// 6. Assigning array of wrong element type:
+// var nums: int[] = [1, 2];
+// nums = ["a"];
+
+// 7. Runtime out-of-bounds access:
+// var bounds = [1, 2];
+// print bounds[10];

@@ -19,7 +19,7 @@ func TestExecutorRunsMainExampleProgram(t *testing.T) {
 		t.Fatalf("execute failed: %v", err)
 	}
 
-	expected := "3\n10\n34\n"
+	expected := "3\n10\n34\ncompiler\ntrue\n"
 	if output != expected {
 		t.Fatalf("expected output %q, got %q", expected, output)
 	}
