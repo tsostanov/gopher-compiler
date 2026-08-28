@@ -1,112 +1,189 @@
-# comp
+# Gopher Compiler
 
-Small educational compiler front-end in Go. It includes:
+Учебный компилятор и интерпретатор, написанный на Go.
 
-- a lexer;
-- a parser that builds an AST;
-- a text AST printer;
-- a Mermaid AST generator;
-- a semantic analyzer with scope, initialization, and type checks;
-- an AST optimizer with constant folding;
-- an AST-based interpreter/executor.
+Проект реализует полный пайплайн обработки небольшого языка программирования: от лексического анализа исходного кода до оптимизации AST и выполнения программы.
 
-## Project Layout
+## Возможности
 
-- `cmd/comp` - main CLI entry point
-- `cmd/lexer-demo` - lab-style lexer demo
-- `cmd/parser-demo` - lab-style parser demo with recovery
-- `cmd/semantic-demo` - lab-style semantic diagnostics demo
-- `cmd/interpreter-demo` - lab-style interpreter demo
-- `internal/token` - token types and token metadata
-- `internal/lexer` - lexical analysis
-- `internal/parser` - syntax analysis
-- `internal/ast` - AST nodes and AST renderers
-- `internal/semantic` - semantic analysis
-- `internal/optimizer` - AST optimization and verification
-- `internal/executor` - AST execution/runtime
-- `examples` - sample input program
+- лексический анализ;
+- синтаксический анализ и построение AST;
+- текстовый вывод AST;
+- генерация AST-диаграмм в формате Mermaid;
+- семантический анализ;
+- статическая проверка типов;
+- проверка областей видимости и инициализации переменных;
+- оптимизация AST с constant folding;
+- интерпретация и выполнение программы.
 
-## Pipeline
+## Архитектура
 
-The default execution pipeline is:
+Основной пайплайн компилятора:
 
-```txt
+```text
 Lexer -> Parser -> Semantic Analyzer -> Optimizer -> Interpreter
 ```
 
-## Language Features
+Структура проекта:
 
-The language supports:
+```text
+cmd/
+├── comp/               # основной CLI
+├── lexer-demo/         # демонстрация работы лексера
+├── parser-demo/        # демонстрация парсера
+├── semantic-demo/      # демонстрация семантического анализа
+└── interpreter-demo/   # демонстрация интерпретатора
 
-- variable declarations: `var x: int;`, `var x: int = 10;`, `var x = 10;`
-- function declarations: `func add(a: int, b: int): int { return a + b; }`
-- function calls: `add(1, 2)`
-- assignment: `x = 20;`
-- array literals and indexing: `[1, 2, 3]`, `xs[0]`, `xs[1] = 10`
-- return statements: `return x;`, `return;`
-- output: `print x;`
-- blocks: `{ ... }`
-- conditions: `if (...) ... else ...`
-- loops: `while (...) ...`
-- literals: integers, strings, booleans (`true`, `false`)
-- operators: `+`, `-`, `*`, `/`, `!`, `==`, `!=`, `<`, `<=`, `>`, `>=`, `and`, `or`, `&&`, `||`
-- line comments: `// comment`
+internal/
+├── token/              # токены и их метаданные
+├── lexer/              # лексический анализ
+├── parser/             # синтаксический анализ
+├── ast/                # AST и его представления
+├── semantic/           # семантический анализ
+├── optimizer/          # оптимизация AST
+└── executor/           # выполнение программы
 
-## Type System
+examples/               # примеры программ
+```
 
-The default mode is statically and strictly typed.
+## Возможности языка
 
-Available types:
+Язык поддерживает объявления переменных:
 
-- `int`
-- `bool`
-- `string`
-- array types such as `int[]`, `bool[]`, `string[]`
+```text
+var x: int;
+var x: int = 10;
+var x = 10;
+```
 
-Strict-mode rules:
+Функции:
 
-- a variable must have an explicit type annotation or an initializer
-- if the type is omitted, it is inferred from the initializer
-- assignments must match the declared or inferred type
-- function arguments must match parameter types
-- return expressions must match the declared function return type
-- `if` and `while` conditions must be `bool`
-- arithmetic operators work with `int`
-- logical operators work with `bool`
-- `+` supports `int + int` and `string + string`
-- equality operators require both operands to have the same type
+```text
+func add(a: int, b: int): int {
+    return a + b;
+}
+```
 
-## Semantic Checks
+Вызовы функций:
 
-The analyzer reports:
+```text
+add(1, 2)
+```
 
-- use of an undeclared variable
-- assignment to an undeclared variable
-- use before initialization
-- redeclaration in the same scope
-- unused variables
-- type mismatches in declarations and assignments
-- invalid function calls and return types
-- invalid operand types in expressions
-- dead-code warnings for obviously false `if` and `while` conditions
+Присваивания:
 
-## Run
+```text
+x = 20;
+```
 
-Requirements: Go 1.25+.
+Массивы и доступ по индексу:
 
-Run with a file:
+```text
+var numbers: int[] = [1, 2, 3];
+print numbers[0];
+numbers[1] = 10;
+```
+
+Условия и циклы:
+
+```text
+if (x > 0) {
+    print x;
+} else {
+    print 0;
+}
+
+while (x > 0) {
+    x = x - 1;
+}
+```
+
+Также поддерживаются:
+
+- `return`;
+- блоки `{ ... }`;
+- `print`;
+- целые числа;
+- строки;
+- логические значения `true` и `false`;
+- комментарии `//`;
+- арифметические операторы `+`, `-`, `*`, `/`;
+- операторы сравнения `==`, `!=`, `<`, `<=`, `>`, `>=`;
+- логические операторы `!`, `and`, `or`, `&&`, `||`.
+
+## Система типов
+
+По умолчанию используется строгая статическая типизация.
+
+Поддерживаемые типы:
+
+```text
+int
+bool
+string
+int[]
+bool[]
+string[]
+```
+
+Если тип переменной не указан явно, он может быть выведен из значения:
+
+```text
+var x = 10;
+var message = "hello";
+var flag = true;
+```
+
+Компилятор проверяет соответствие типов при:
+
+- объявлениях и присваиваниях;
+- передаче аргументов в функции;
+- возврате значений из функций;
+- использовании арифметических и логических операторов;
+- использовании условий `if` и `while`.
+
+## Семантический анализ
+
+Анализатор обнаруживает:
+
+- использование необъявленных переменных;
+- присваивание необъявленной переменной;
+- использование переменной до инициализации;
+- повторное объявление в одной области видимости;
+- неиспользуемые переменные;
+- несовместимые типы;
+- неправильные аргументы функций;
+- несовместимый тип возвращаемого значения;
+- некорректные типы операндов;
+- очевидно недостижимые ветки и циклы.
+
+## Оптимизация
+
+Перед выполнением программа проходит оптимизацию AST.
+
+Например:
+
+```text
+1 + 2 * 3
+```
+
+может быть вычислено заранее и заменено константой.
+
+Поддерживается проверка корректности оптимизации: программа выполняется до и после преобразования AST, после чего сравниваются результат и поведение.
+
+## Запуск
+
+Требуется Go 1.25+.
+
+Запуск программы из файла:
 
 ```bash
 go run ./cmd/comp examples/program.txt
 ```
 
-If no file path is provided, the built-in sample is used:
+Если путь к файлу не передан, используется встроенный пример.
 
-```txt
-var x: int = 123; print x + 5;
-```
-
-CLI modes:
+Основные режимы CLI:
 
 ```bash
 go run ./cmd/comp --tokens examples/program.txt
@@ -119,59 +196,46 @@ go run ./cmd/comp --verify-optimization examples/program.txt
 go run ./cmd/comp --run examples/program.txt
 ```
 
-`--run` executes the optimized AST.
+- `--tokens` - вывести токены;
+- `--ast` - вывести AST до оптимизации;
+- `--optimized-ast` - вывести оптимизированное AST;
+- `--ast-before-after` - показать AST до и после оптимизации;
+- `--mermaid` - сгенерировать Mermaid-представление AST;
+- `--semantic` - выполнить семантический анализ;
+- `--verify-optimization` - проверить корректность оптимизации;
+- `--run` - выполнить программу.
 
-`--ast` prints the parsed AST before optimization.
+## Демонстрационные режимы
 
-`--optimized-ast` prints the AST after optimization.
-
-`--ast-before-after` prints both versions.
-
-`--verify-optimization` executes both ASTs in isolation and checks that output and runtime behavior match.
-
-## Lab-Style Demos
-
-Lexer demo:
+Отдельно можно запускать отдельные этапы:
 
 ```bash
 go run ./cmd/lexer-demo examples/program.txt
-```
-
-Parser demo:
-
-```bash
 go run ./cmd/parser-demo examples/program.txt
-```
-
-Semantic demo:
-
-```bash
 go run ./cmd/semantic-demo examples/program.txt
-```
-
-Interpreter demo:
-
-```bash
 go run ./cmd/interpreter-demo examples/program.txt
 ```
 
-## Compatibility Mode
+## Режим совместимости
 
-The compiler supports both `func` and `fun`.
-`fun` is provided for compatibility with CompilerLabs-style examples.
+Компилятор понимает как `func`, так и `fun`.
 
-With `--compat-loginov`, the compiler also accepts:
+При запуске с флагом:
 
-- untyped parameters: `fun add(a, b) { ... }`
-- optional function return type
-- `var x;`
-- `return;`
+```text
+--compat-loginov
+```
 
-## Example Program
+дополнительно поддерживаются:
 
-`examples/program.txt`:
+- параметры функций без явных типов;
+- необязательный тип возвращаемого значения;
+- объявления вида `var x;`;
+- `return;` без выражения.
 
-```txt
+## Пример программы
+
+```text
 var numbers: int[] = [1 + 2, 4 * 2, 10 - 3];
 print numbers[0];
 
@@ -189,7 +253,9 @@ var flags: bool[] = [true, false, 10 > 3];
 print flags[2];
 ```
 
-## Tests
+## Тесты
+
+Запуск всех тестов:
 
 ```bash
 go test ./...
